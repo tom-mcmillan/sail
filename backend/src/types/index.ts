@@ -1,3 +1,5 @@
+import { Request } from 'express';
+
 export interface User {
   id: string;
   email: string;
@@ -46,11 +48,6 @@ export interface CreateExchangeRequest {
   config?: Record<string, any>;
 }
 
-import { Request } from 'express';
-
-export interface AuthenticatedRequest extends Request {
-  user?: User;
-}
 
 export interface ApiResponse<T = any> {
   success: boolean;
