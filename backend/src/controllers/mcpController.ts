@@ -1,54 +1,193 @@
 import { Request, Response } from 'express';
 import { db } from '../services/database';
 import { redis } from '../services/redis';
+import { fileSystemService } from '../services/fileSystem';
 
 export class MCPController {
   async handleMCPRequest(req: Request, res: Response): Promise<void> {
     try {
       const { slug } = req.params;
+      const method = req.method;
+      const path = req.path;
       
       // Get exchange info
       const exchangeResult = await db.query(
-        'SELECT * FROM exchanges WHERE slug = $1 AND status = $2',
-        [slug, 'active']
+        'SELECT * FROM exchanges WHERE slug = $1',
+        [slug]
       );
 
       if (exchangeResult.rows.length === 0) {
         res.status(404).json({ 
-          error: 'Exchange not found or inactive' 
+          error: 'MCP server not found',
+          jsonrpc: '2.0',
+          id: null
         });
         return;
       }
 
       const exchange = exchangeResult.rows[0];
 
-      // Check privacy settings
-      if (exchange.privacy === 'private') {
-        // TODO: Implement proper authentication for private exchanges
-        // For now, we'll allow access but this should be secured
+      // Handle MCP server discovery (GET request to root)
+      if (method === 'GET' && !req.url.includes('/tools') && !req.url.includes('/call')) {
+        res.json({
+          name: exchange.name,
+          version: '1.0.0',
+          description: exchange.description,
+          capabilities: {
+            tools: {},
+            resources: {}
+          },
+          serverInfo: {
+            name: exchange.name,
+            version: '1.0.0'
+          }
+        });
+        return;
       }
 
-      // Update last accessed time and increment query count
+      // Handle tools discovery
+      if (method === 'GET' && req.url.includes('/tools')) {
+        const tools = await this.getToolsForExchange(exchange);
+        res.json({
+          jsonrpc: '2.0',
+          result: {
+            tools: tools
+          }
+        });
+        return;
+      }
+
+      // Handle tool calls (POST requests)
+      if (method === 'POST') {
+        const mcpResponse = await this.handleToolCall(exchange, req);
+        res.json(mcpResponse);
+        return;
+      }
+
+      // Update analytics
       await db.query(
         'UPDATE exchanges SET last_accessed = NOW(), queries_count = queries_count + 1 WHERE id = $1',
         [exchange.id]
       );
 
-      // Log analytics
-      await db.query(
-        'INSERT INTO analytics (exchange_id, query, user_agent, ip_address) VALUES ($1, $2, $3, $4)',
-        [exchange.id, req.url, req.get('User-Agent'), req.ip]
-      );
+      // Default response
+      res.json({
+        jsonrpc: '2.0',
+        result: {
+          message: 'MCP server active',
+          server: exchange.name
+        }
+      });
 
-      // Route to appropriate MCP handler based on exchange type
-      const mcpResponse = await this.routeMCPRequest(exchange, req);
-      
-      res.json(mcpResponse);
     } catch (error) {
       console.error('MCP request error:', error);
       res.status(500).json({ 
-        error: 'MCP request failed' 
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Internal error'
+        },
+        id: null
       });
+    }
+  }
+
+  private async getToolsForExchange(exchange: any): Promise<any[]> {
+    switch (exchange.type) {
+      case 'local':
+        return [
+          {
+            name: 'search_documents',
+            description: 'Search through documents in the folder',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: { type: 'string', description: 'Search query' },
+                limit: { type: 'number', default: 10 }
+              },
+              required: ['query']
+            }
+          },
+          {
+            name: 'get_document',
+            description: 'Get content of a specific document',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                file_path: { type: 'string', description: 'Relative path to the file' }
+              },
+              required: ['file_path']
+            }
+          },
+          {
+            name: 'list_files',
+            description: 'List all available files',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                limit: { type: 'number', default: 20 }
+              }
+            }
+          }
+        ];
+      default:
+        return [];
+    }
+  }
+
+  private async handleToolCall(exchange: any, req: Request): Promise<any> {
+    try {
+      const { method, params, id } = req.body;
+      
+      if (method === 'tools/call') {
+        const { name, arguments: args } = params;
+        
+        let result;
+        switch (name) {
+          case 'search_documents':
+            result = await this.searchDocuments(exchange.config.folderPath, args.query, args.limit || 10);
+            break;
+          case 'get_document':
+            result = await this.getDocument(exchange.config.folderPath, args.file_path);
+            break;
+          case 'list_files':
+            result = await this.listFiles(exchange.config.folderPath, args.limit || 20);
+            break;
+          default:
+            return {
+              jsonrpc: '2.0',
+              error: {
+                code: -32601,
+                message: `Method ${name} not found`
+              },
+              id
+            };
+        }
+        
+        return {
+          jsonrpc: '2.0',
+          result,
+          id
+        };
+      }
+      
+      return {
+        jsonrpc: '2.0',
+        error: {
+          code: -32601,
+          message: 'Method not found'
+        },
+        id
+      };
+    } catch (error) {
+      return {
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: error instanceof Error ? error.message : 'Internal error'
+        },
+        id: req.body?.id
+      };
     }
   }
 
@@ -67,43 +206,77 @@ export class MCPController {
 
   private async handleLocalMCPRequest(exchange: any, req: Request): Promise<any> {
     const { metadata, config } = exchange;
+    const { folderPath } = config;
+
+    if (!folderPath) {
+      return { error: 'No folder path configured for this exchange' };
+    }
     
     if (req.url.includes('/tools')) {
       return {
         tools: [
           {
             name: 'search_documents',
-            description: 'Search through uploaded documents',
+            description: 'Search through documents in the folder',
             inputSchema: {
               type: 'object',
               properties: {
                 query: { type: 'string', description: 'Search query' },
-                limit: { type: 'number', default: 10 }
+                limit: { type: 'number', default: 10, minimum: 1, maximum: 50 }
               },
               required: ['query']
             }
           },
           {
             name: 'get_document',
-            description: 'Get a specific document by ID',
+            description: 'Get content of a specific document by relative path',
             inputSchema: {
               type: 'object',
               properties: {
-                document_id: { type: 'string', description: 'Document ID' }
+                file_path: { type: 'string', description: 'Relative path to the file' }
               },
-              required: ['document_id']
+              required: ['file_path']
+            }
+          },
+          {
+            name: 'list_files',
+            description: 'List all available files in the folder',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                limit: { type: 'number', default: 20, minimum: 1, maximum: 100 }
+              }
             }
           }
         ]
       };
     }
 
-    // Handle tool calls and other MCP operations
+    // Handle tool calls based on the request body
+    if (req.method === 'POST' && req.body) {
+      const { name: toolName, arguments: toolArgs } = req.body;
+      
+      switch (toolName) {
+        case 'search_documents':
+          return await this.searchDocuments(folderPath, toolArgs.query, toolArgs.limit || 10);
+        
+        case 'get_document':
+          return await this.getDocument(folderPath, toolArgs.file_path);
+        
+        case 'list_files':
+          return await this.listFiles(folderPath, toolArgs.limit || 20);
+      }
+    }
+
+    // Default response for MCP server info
     return { 
-      message: 'Local MCP handler active',
-      exchange_name: exchange.name,
+      name: exchange.name,
+      description: exchange.description,
       type: 'local',
-      available_tools: ['search_documents', 'get_document']
+      folder_path: folderPath,
+      status: 'active',
+      available_tools: ['search_documents', 'get_document', 'list_files'],
+      file_stats: metadata
     };
   }
 
@@ -258,6 +431,99 @@ export class MCPController {
         error: 'Failed to retrieve analytics'
       });
     }
+  }
+
+  // Helper methods for local file operations
+  private async searchDocuments(folderPath: string, query: string, limit: number): Promise<any> {
+    try {
+      const files = await fileSystemService.searchFiles(folderPath, query, limit);
+      
+      return {
+        content: [{
+          type: 'text',
+          text: `Found ${files.length} documents matching "${query}":\n\n` +
+                files.map(file => 
+                  `📄 **${file.name}**\n` +
+                  `   Path: ${file.relativePath}\n` +
+                  `   Size: ${this.formatFileSize(file.size)}\n` +
+                  `   Type: ${file.type}\n` +
+                  `   Modified: ${file.lastModified.toLocaleDateString()}\n`
+                ).join('\n')
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error searching documents: ${error instanceof Error ? error.message : 'Unknown error'}`
+        }]
+      };
+    }
+  }
+
+  private async getDocument(folderPath: string, relativePath: string): Promise<any> {
+    try {
+      const fullPath = require('path').join(folderPath, relativePath);
+      
+      // Security check - ensure the path is within the folder
+      if (!fullPath.startsWith(folderPath)) {
+        throw new Error('Invalid file path - outside of allowed folder');
+      }
+
+      const content = await fileSystemService.readFileContent(fullPath);
+      
+      return {
+        content: [{
+          type: 'text',
+          text: `**File: ${relativePath}**\n\n${content}`
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error reading document: ${error instanceof Error ? error.message : 'Unknown error'}`
+        }]
+      };
+    }
+  }
+
+  private async listFiles(folderPath: string, limit: number): Promise<any> {
+    try {
+      const allFiles = await fileSystemService.getAllFiles(folderPath);
+      const supportedFiles = allFiles
+        .filter(file => fileSystemService.isSupportedFileType(file.extension))
+        .slice(0, limit);
+      
+      return {
+        content: [{
+          type: 'text',
+          text: `📁 **Available Documents** (${supportedFiles.length} of ${allFiles.length} total files)\n\n` +
+                supportedFiles.map(file => 
+                  `📄 **${file.name}**\n` +
+                  `   Path: ${file.relativePath}\n` +
+                  `   Size: ${this.formatFileSize(file.size)}\n` +
+                  `   Type: ${file.type}\n` +
+                  `   Modified: ${file.lastModified.toLocaleDateString()}\n`
+                ).join('\n')
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error listing files: ${error instanceof Error ? error.message : 'Unknown error'}`
+        }]
+      };
+    }
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 }
 

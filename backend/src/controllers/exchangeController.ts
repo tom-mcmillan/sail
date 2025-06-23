@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import Docker from 'dockerode';
 import { db } from '../services/database';
 import { redis } from '../services/redis';
+import { fileSystemService } from '../services/fileSystem';
 import { Exchange, CreateExchangeRequest } from '../types';
 
 interface AuthenticatedRequest extends Request {
@@ -9,10 +11,33 @@ interface AuthenticatedRequest extends Request {
 }
 
 export class ExchangeController {
+  private docker: Docker;
+
+  constructor() {
+    this.docker = new Docker();
+  }
   async createExchange(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { name, description, type, privacy = 'private', config = {} } = req.body as CreateExchangeRequest;
-      const userId = req.user!.id;
+      // Temporary: Use a test user ID when auth is disabled  
+      const testUserId = '00000000-0000-0000-0000-000000000001';
+      const userId = req.user?.id || testUserId;
+
+      // Ensure test user exists
+      if (!req.user) {
+        try {
+          const existingUser = await db.query('SELECT id FROM users WHERE id = $1', [testUserId]);
+          if (existingUser.rows.length === 0) {
+            await db.query(
+              'INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, $3, $4)',
+              [testUserId, 'test@sailmcp.com', 'Test User', 'test-hash']
+            );
+            console.log('✅ Test user created');
+          }
+        } catch (userError) {
+          console.error('Error creating test user:', userError);
+        }
+      }
 
       if (!name || !description || !type) {
         res.status(400).json({
@@ -23,7 +48,11 @@ export class ExchangeController {
       }
 
       // Generate unique slug
-      const baseSlug = this.generateSlug(name);
+      const baseSlug = name
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .substring(0, 50);
       const slug = `${baseSlug}-${uuidv4().substring(0, 8)}`;
 
       // Check if slug already exists (very unlikely but safety check)
@@ -60,14 +89,14 @@ export class ExchangeController {
       console.error('Create exchange error:', error);
       res.status(500).json({
         success: false,
-        error: 'Failed to create exchange'
+        error: `Failed to create exchange: ${error instanceof Error ? error.message : 'Unknown error'}`
       });
     }
   }
 
   async getExchanges(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const userId = req.user!.id;
+      const userId = req.user?.id || '00000000-0000-0000-0000-000000000001';
       const { page = 1, limit = 20, type, status } = req.query;
 
       let query = 'SELECT * FROM exchanges WHERE user_id = $1';
@@ -215,11 +244,11 @@ export class ExchangeController {
 
       const exchange = exchangeResult.rows[0];
 
-      // TODO: Stop and remove Docker container if exists
+      // Stop and remove Docker container if exists
       if (exchange.container_id) {
         try {
-          // Docker cleanup logic would go here
-          console.log(`Should stop container: ${exchange.container_id}`);
+          await this.stopMCPContainer(exchange.container_id);
+          console.log(`Container stopped: ${exchange.container_id}`);
         } catch (error) {
           console.error('Error stopping container:', error);
         }
@@ -343,13 +372,20 @@ export class ExchangeController {
       }
 
       if (success) {
-        // TODO: Start MCP server container
-        // const port = await this.getAvailablePort();
-        // const containerId = await this.startMCPContainer(exchange, port);
+        // Start MCP server container
+        const port = await this.getAvailablePort();
+        const containerId = await this.startMCPContainer(exchange, port);
+
+        const updatedMetadata = {
+          ...metadata,
+          container_id: containerId,
+          port: port,
+          mcp_url: `${process.env.BASE_URL}/mcp/${exchange.slug}`
+        };
 
         await db.query(
-          'UPDATE exchanges SET status = $1, metadata = $2 WHERE id = $3',
-          ['active', JSON.stringify(metadata), exchange.id]
+          'UPDATE exchanges SET status = $1, metadata = $2, container_id = $3 WHERE id = $4',
+          ['active', JSON.stringify(updatedMetadata), containerId, exchange.id]
         );
 
         console.log(`Exchange ${exchange.name} is now active`);
@@ -369,14 +405,23 @@ export class ExchangeController {
   }
 
   private async processLocalFiles(exchange: Exchange): Promise<any> {
-    // Process uploaded files from the config
-    const { files = [] } = exchange.config;
+    // Process folder path from the config
+    const { folderPath } = exchange.config;
+    
+    if (!folderPath) {
+      throw new Error('Folder path is required for local exchanges');
+    }
+
+    // Scan the folder to get metadata
+    const folderStats = await fileSystemService.scanFolder(folderPath);
     
     return {
       type: 'local',
-      file_count: files.length,
-      total_size: files.reduce((sum: number, file: any) => sum + (file.size || 0), 0),
-      file_types: [...new Set(files.map((file: any) => this.getFileType(file.originalName || file.name)))],
+      folder_path: folderPath,
+      file_count: folderStats.fileCount,
+      total_size: folderStats.totalSize,
+      file_types: folderStats.fileTypes,
+      last_scanned: new Date().toISOString(),
       processed_at: new Date().toISOString()
     };
   }
@@ -416,6 +461,116 @@ export class ExchangeController {
       'html': 'html'
     };
     return typeMap[ext || ''] || 'unknown';
+  }
+
+  private async ensureTestUser(): Promise<void> {
+    try {
+      const existingUser = await db.query('SELECT id FROM users WHERE id = $1', ['test-user-id']);
+      
+      if (existingUser.rows.length === 0) {
+        await db.query(
+          'INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, $3, $4)',
+          ['test-user-id', 'test@sailmcp.com', 'Test User', 'test-hash']
+        );
+        console.log('✅ Test user created');
+      }
+    } catch (error) {
+      console.error('Error ensuring test user:', error);
+    }
+  }
+
+  private async getAvailablePort(): Promise<number> {
+    const basePort = parseInt(process.env.MCP_SERVER_BASE_PORT || '4000');
+    
+    // Get all active container ports from database
+    const result = await db.query(
+      'SELECT metadata FROM exchanges WHERE status = $1 AND metadata IS NOT NULL',
+      ['active']
+    );
+    
+    const usedPorts = new Set<number>();
+    result.rows.forEach(row => {
+      try {
+        const metadata = JSON.parse(row.metadata);
+        if (metadata.port) {
+          usedPorts.add(metadata.port);
+        }
+      } catch (error) {
+        // Ignore parsing errors
+      }
+    });
+    
+    // Find next available port
+    let port = basePort;
+    while (usedPorts.has(port)) {
+      port++;
+    }
+    
+    return port;
+  }
+
+  private async startMCPContainer(exchange: Exchange, port: number): Promise<string> {
+    try {
+      const imageName = process.env.MCP_SERVER_IMAGE || 'sail-mcp-server';
+      
+      // Create container
+      const container = await this.docker.createContainer({
+        Image: imageName,
+        Cmd: [exchange.slug],
+        Env: [
+          `EXCHANGE_SLUG=${exchange.slug}`,
+          `API_URL=${process.env.BASE_URL || 'http://localhost:3001'}`,
+          `PORT=${port}`
+        ],
+        ExposedPorts: {
+          [`${port}/tcp`]: {}
+        },
+        HostConfig: {
+          PortBindings: {
+            [`${port}/tcp`]: [{ HostPort: port.toString() }]
+          },
+          RestartPolicy: {
+            Name: 'unless-stopped'
+          }
+        },
+        Labels: {
+          'sail.exchange.id': exchange.id,
+          'sail.exchange.slug': exchange.slug,
+          'sail.service': 'mcp-server'
+        }
+      });
+
+      // Start container
+      await container.start();
+      
+      console.log(`MCP container started for exchange ${exchange.slug} on port ${port}`);
+      return container.id;
+    } catch (error) {
+      console.error('Error starting MCP container:', error);
+      throw error;
+    }
+  }
+
+  private async stopMCPContainer(containerId: string): Promise<void> {
+    try {
+      const container = this.docker.getContainer(containerId);
+      
+      // Stop the container
+      await container.stop({ t: 10 }); // 10 second timeout
+      
+      // Remove the container
+      await container.remove();
+      
+      console.log(`MCP container ${containerId} stopped and removed`);
+    } catch (error: any) {
+      if (error.statusCode === 404) {
+        // Container doesn't exist, which is fine
+        console.log(`Container ${containerId} not found (already removed)`);
+      } else {
+        console.error('Error stopping MCP container:', error);
+        throw error;
+      }
+    }
   }
 }
 

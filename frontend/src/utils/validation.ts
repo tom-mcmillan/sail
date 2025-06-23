@@ -1,4 +1,4 @@
-import { CreateExchangeForm, ValidationError } from '@/types';
+import { CreateExchangeForm } from '@/types';
 
 export const validateExchangeForm = (formData: CreateExchangeForm): {
   isValid: boolean;

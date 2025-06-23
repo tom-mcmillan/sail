@@ -1,3 +1,5 @@
+import React from 'react';
+
 export interface User {
   id: string;
   name: string;
@@ -18,14 +20,14 @@ export interface Exchange {
   url: string;
   createdAt: string;
   privacy: 'private' | 'public';
-  config?: Record<string, any>;
-  metadata?: Record<string, any>;
+  config?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SourceType {
   id: string;
   name: string;
-  icon: any;
+  icon: React.ComponentType;
   description: string;
   features: string[];
   color: string;

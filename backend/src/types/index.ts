@@ -48,6 +48,21 @@ export interface CreateExchangeRequest {
   config?: Record<string, any>;
 }
 
+export interface LocalExchangeConfig {
+  folderPath: string;
+}
+
+export interface GoogleDriveConfig {
+  credentials: any;
+  folderId: string;
+}
+
+export interface GitHubConfig {
+  token: string;
+  owner: string;
+  repo: string;
+}
+
 
 export interface ApiResponse<T = any> {
   success: boolean;

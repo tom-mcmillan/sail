@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Exchange, CreateExchangeForm } from '@/types';
-import { api } from '@/utils/api';
+// import { api } from '@/utils/api';
 import { MOCK_EXCHANGES } from '@/constants';
 
 export const useExchanges = () => {
@@ -31,7 +31,7 @@ export const useExchanges = () => {
       
       setExchanges(prev => [newExchange, ...prev]);
       return newExchange;
-    } catch (err) {
+    } catch {
       const errorMessage = 'Failed to create exchange';
       setError(errorMessage);
       throw new Error(errorMessage);
@@ -46,7 +46,7 @@ export const useExchanges = () => {
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 500));
       setExchanges(prev => prev.filter(ex => ex.id !== id));
-    } catch (err) {
+    } catch {
       const errorMessage = 'Failed to delete exchange';
       setError(errorMessage);
       throw new Error(errorMessage);
