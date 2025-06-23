@@ -38,6 +38,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sail-backend-prod
+    env_file:
+      - .env.prod
     environment:
       DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}
       REDIS_URL: redis://redis:6379

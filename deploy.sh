@@ -57,6 +57,18 @@ echo "✅ Docker installed and running"
 echo "✅ User has Docker permissions"
 echo "✅ Environment file configured"
 
+# Validate environment variables
+if [[ -z "$DATABASE_PASSWORD" ]] || [[ -z "$JWT_SECRET" ]] || [[ -z "$ACME_EMAIL" ]]; then
+    echo -e "${RED}❌ Missing required environment variables. Please check .env.prod${NC}"
+    exit 1
+fi
+
+# Check for special characters in database password that could cause URL parsing issues
+if [[ "$DATABASE_PASSWORD" =~ [+/=] ]]; then
+    echo -e "${YELLOW}⚠️  Database password contains special characters that may cause URL parsing issues.${NC}"
+    echo -e "${YELLOW}   Consider using a password without +, /, or = characters.${NC}"
+fi
+
 # Create necessary directories
 echo -e "${BLUE}📁 Creating storage directories...${NC}"
 mkdir -p backend/storage
@@ -73,9 +85,10 @@ cd backend
 docker build -f Dockerfile.mcp -t sail-mcp-server .
 cd ..
 
-# Stop any existing containers
+# Stop any existing containers and remove volumes if database connection failed previously
 echo -e "${BLUE}🛑 Stopping existing containers...${NC}"
-docker-compose -f docker-compose.prod.yml down || true
+echo -e "${YELLOW}🗄️  Removing old database volumes to ensure fresh initialization...${NC}"
+docker-compose -f docker-compose.prod.yml down -v || true
 
 # Pull latest images
 echo -e "${BLUE}📥 Pulling latest base images...${NC}"
