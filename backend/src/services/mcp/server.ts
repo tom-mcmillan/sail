@@ -75,7 +75,7 @@ export class MCPServer {
         
         switch (name) {
           case 'search':
-            result = await this.handleSearch(args as { query: string });
+            result = await this.handleSearch(args as { query: string; limit?: number });
             break;
           case 'fetch':
             result = await this.handleFetch(args as { id: string });
@@ -119,7 +119,7 @@ export class MCPServer {
   private getToolsForExchange(): any[] {
     const tools = [];
 
-    // Add search and fetch tools for ChatGPT compatibility
+    // ChatGPT requires exactly these two tools with specific schemas
     tools.push({
       name: 'search',
       description: 'Search for documents matching a query',
@@ -129,9 +129,17 @@ export class MCPServer {
           query: { 
             type: 'string', 
             description: 'Search query to find documents' 
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of results to return',
+            default: 10,
+            minimum: 1,
+            maximum: 50
           }
         },
-        required: ['query']
+        required: ['query'],
+        additionalProperties: false
       }
     });
 
@@ -146,7 +154,8 @@ export class MCPServer {
             description: 'Document ID to retrieve' 
           }
         },
-        required: ['id']
+        required: ['id'],
+        additionalProperties: false
       }
     });
 
@@ -193,34 +202,52 @@ export class MCPServer {
   }
 
   // ChatGPT-specific search implementation
-  private async handleSearch(args: { query: string }): Promise<any> {
+  private async handleSearch(args: { query: string; limit?: number }): Promise<any> {
     try {
+      const limit = args.limit || 10;
       const files = await fileSystemService.searchFiles(
         this.exchange.config.folderPath, 
         args.query, 
-        10
+        limit
       );
 
-      // Format for ChatGPT's expected schema
-      const results = files.map((file, index) => ({
-        id: `doc-${index}-${file.name.replace(/[^a-zA-Z0-9]/g, '-')}`,
-        title: file.name,
-        text: `File: ${file.name}\nPath: ${file.relativePath}\nSize: ${file.size} bytes\nModified: ${file.lastModified}`,
-        url: `file://${file.relativePath}`
-      }));
+      // Format results exactly as ChatGPT expects
+      const results = files.map((file, index) => {
+        // Create consistent, unique IDs
+        const cleanName = file.name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        const id = `doc-${Date.now()}-${index}-${cleanName}`;
+        
+        return {
+          id: id,
+          title: file.name,
+          text: `File: ${file.name}\nPath: ${file.relativePath}\nSize: ${this.formatFileSize(file.size)}\nModified: ${file.lastModified.toISOString()}\nType: ${file.type}`,
+          url: `${process.env.BASE_URL || 'https://sailmcp.com'}/files/${encodeURIComponent(file.relativePath)}`,
+          metadata: {
+            size: file.size,
+            type: file.type,
+            extension: file.extension,
+            lastModified: file.lastModified.toISOString()
+          }
+        };
+      });
 
+      // Return results in the format ChatGPT expects
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify({ results }, null, 2)
-        }]
+          text: `Found ${results.length} documents matching "${args.query}":\n\n` + 
+                results.map(r => `• ${r.title} (${r.id})`).join('\n') + 
+                '\n\nUse the "fetch" tool with any document ID to retrieve the full content.'
+        }],
+        results: results // Include results for potential processing
       };
     } catch (error) {
       return {
         content: [{
           type: 'text',
           text: `Error searching: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }]
+        }],
+        isError: true
       };
     }
   }
@@ -228,49 +255,56 @@ export class MCPServer {
   // ChatGPT-specific fetch implementation
   private async handleFetch(args: { id: string }): Promise<any> {
     try {
-      // Extract filename from ID
-      const match = args.id.match(/doc-\d+-(.+)$/);
+      // Extract filename from ID pattern: doc-timestamp-index-cleanname
+      const match = args.id.match(/doc-\d+-\d+-(.+)$/);
       if (!match) {
-        throw new Error('Invalid document ID');
+        throw new Error('Invalid document ID format');
       }
       
-      const filename = match[1].replace(/-/g, '.');
+      // Convert clean name back to potential filename patterns
+      const cleanName = match[1];
       const files = await fileSystemService.getAllFiles(this.exchange.config.folderPath);
-      const file = files.find(f => f.name === filename);
+      
+      // Find file by matching the cleaned name pattern
+      const file = files.find(f => {
+        const fileCleanName = f.name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        return fileCleanName === cleanName;
+      });
       
       if (!file) {
-        throw new Error('Document not found');
+        throw new Error(`Document not found for ID: ${args.id}`);
       }
 
-      const content = await fileSystemService.readFileContent(
-        require('path').join(this.exchange.config.folderPath, file.relativePath)
-      );
+      const fullPath = require('path').join(this.exchange.config.folderPath, file.relativePath);
+      const content = await fileSystemService.readFileContent(fullPath);
 
-      // Format for ChatGPT's expected schema
-      const document = {
-        id: args.id,
-        title: file.name,
-        text: content,
-        url: `file://${file.relativePath}`,
-        metadata: {
-          size: file.size,
-          type: file.type,
-          modified: file.lastModified.toISOString()
-        }
-      };
-
+      // Return content in the format ChatGPT expects
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify(document, null, 2)
-        }]
+          text: `# ${file.name}\n\n**File Information:**\n- Path: ${file.relativePath}\n- Size: ${this.formatFileSize(file.size)}\n- Type: ${file.type}\n- Modified: ${file.lastModified.toISOString()}\n\n**Content:**\n\n${content}`
+        }],
+        document: {
+          id: args.id,
+          title: file.name,
+          content: content,
+          url: `${process.env.BASE_URL || 'https://sailmcp.com'}/files/${encodeURIComponent(file.relativePath)}`,
+          metadata: {
+            size: file.size,
+            type: file.type,
+            extension: file.extension,
+            lastModified: file.lastModified.toISOString(),
+            path: file.relativePath
+          }
+        }
       };
     } catch (error) {
       return {
         content: [{
           type: 'text',
           text: `Error fetching document: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }]
+        }],
+        isError: true
       };
     }
   }
