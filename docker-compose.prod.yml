@@ -61,6 +61,17 @@ services:
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
+      # OAuth routes with highest priority
+      - "traefik.http.routers.backend-oauth.rule=Host(`sailmcp.com`) && (PathPrefix(`/.well-known`) || PathPrefix(`/oauth`))"
+      - "traefik.http.routers.backend-oauth.tls=true"
+      - "traefik.http.routers.backend-oauth.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.backend-oauth.priority=200"
+      - "traefik.http.routers.backend-oauth.service=backend"
+      - "traefik.http.routers.backend-oauth-http.rule=Host(`sailmcp.com`) && (PathPrefix(`/.well-known`) || PathPrefix(`/oauth`))"
+      - "traefik.http.routers.backend-oauth-http.entrypoints=web"
+      - "traefik.http.routers.backend-oauth-http.priority=200"
+      - "traefik.http.routers.backend-oauth-http.service=backend"
+      # API and MCP routes
       - "traefik.http.routers.backend.rule=Host(`sailmcp.com`) && (PathPrefix(`/api`) || PathPrefix(`/mcp`) || PathPrefix(`/health`) || PathPrefix(`/files`))"
       - "traefik.http.routers.backend.tls=true"
       - "traefik.http.routers.backend.tls.certresolver=letsencrypt"
