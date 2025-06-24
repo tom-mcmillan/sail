@@ -166,7 +166,15 @@ class MCPControllerClass {
    * Process a JSON-RPC request through the MCP server
    */
   private async processRequest(server: any, request: JSONRPCRequest): Promise<any> {
-    const handlers = server.requestHandlers;
+    const handlers = server._requestHandlers || server.requestHandlers;
+    
+    if (!handlers) {
+      throw {
+        code: -32603,
+        message: 'Server not properly initialized'
+      };
+    }
+    
     const handler = handlers.get(request.method);
     
     if (!handler) {
