@@ -13,7 +13,10 @@ import exchangeRoutes from './routes/exchanges';
 import mcpRoutes from './routes/mcp';
 
 // Load environment variables
-config();
+// In production, Docker Compose handles environment variables
+if (process.env.NODE_ENV !== 'production') {
+  config();
+}
 
 class SailMCPServer {
   private app: express.Application;
@@ -29,6 +32,11 @@ class SailMCPServer {
   }
 
   private setupMiddleware(): void {
+    // Debug logging
+    console.log('Setting up middleware...');
+    console.log('FRONTEND_URL from env:', process.env.FRONTEND_URL);
+    console.log('NODE_ENV:', process.env.NODE_ENV);
+    
     // Security middleware
     this.app.use(helmet({
       crossOriginEmbedderPolicy: false,
@@ -43,8 +51,24 @@ class SailMCPServer {
     }));
 
     // CORS configuration
+    const allowedOrigins = process.env.NODE_ENV === 'production' 
+      ? ['https://sailmcp.com', 'https://www.sailmcp.com']
+      : ['http://localhost:3000', 'http://localhost:3001'];
+    
+    console.log('CORS allowed origins:', allowedOrigins);
+    
     this.app.use(cors({
-      origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+      origin: function(origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          console.log('Blocked origin:', origin);
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization']

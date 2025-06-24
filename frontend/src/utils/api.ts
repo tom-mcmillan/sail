@@ -1,8 +1,6 @@
 import { ApiResponse, Exchange, CreateExchangeForm } from '@/types';
 
-const API_BASE = process.env.NODE_ENV === 'production' 
-  ? 'https://getsail.net/api' 
-  : 'http://localhost:3001/api';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 class ApiClient {
   private async request<T>(
