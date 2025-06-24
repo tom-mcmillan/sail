@@ -74,6 +74,20 @@ class MCPControllerClass {
         return;
       }
 
+      // Handle DELETE requests (disconnect/cleanup)
+      if (req.method === 'DELETE') {
+        // Clean up transport and server for this session
+        if (sessionId) {
+          transport.cleanup(sessionId);
+        }
+        res.status(200).json({
+          jsonrpc: '2.0',
+          result: { status: 'disconnected' },
+          id: null
+        });
+        return;
+      }
+
       // Handle OPTIONS for CORS
       if (req.method === 'OPTIONS') {
         res.status(200).json({});

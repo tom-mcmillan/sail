@@ -161,6 +161,19 @@ export class StreamableHTTPTransport extends EventEmitter {
     return `mcp-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
   }
 
+  /**
+   * Clean up a specific session
+   */
+  cleanup(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      if (session.eventStream) {
+        session.eventStream.end();
+      }
+      this.sessions.delete(sessionId);
+    }
+  }
+
   private cleanupSessions(): void {
     const now = Date.now();
     for (const [id, session] of this.sessions) {
