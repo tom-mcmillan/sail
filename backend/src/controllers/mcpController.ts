@@ -23,6 +23,8 @@ class MCPControllerClass {
   async handleMCPRequest(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       console.log(`MCP Request: ${req.method} ${req.url}`);
+      console.log(`Request params:`, req.params);
+      console.log(`Request path:`, req.path);
       const { slug } = req.params;
       const sessionId = req.headers['mcp-session-id'] as string;
       
@@ -63,46 +65,46 @@ class MCPControllerClass {
         this.setupTransportHandlers(transport, mcpServer, exchange);
       }
 
-      // Handle POST requests (JSON-RPC messages)
-      if (req.method === 'POST') {
-        await transport.handlePost(req, res, sessionId);
-        return;
+      // Handle different HTTP methods
+      switch (req.method) {
+        case 'POST':
+          // Handle JSON-RPC messages
+          await transport.handlePost(req, res, sessionId);
+          break;
+          
+        case 'GET':
+          // Handle SSE connection
+          await transport.handleGet(req, res, sessionId);
+          break;
+          
+        case 'DELETE':
+          // Handle disconnect/cleanup
+          if (sessionId) {
+            transport.cleanup(sessionId);
+          }
+          res.status(200).json({
+            jsonrpc: '2.0',
+            result: { status: 'disconnected' },
+            id: null
+          });
+          break;
+          
+        case 'OPTIONS':
+          // Handle CORS preflight
+          res.status(200).json({});
+          break;
+          
+        default:
+          // Method not allowed
+          res.status(405).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32601,
+              message: `Method ${req.method} not allowed`
+            },
+            id: null
+          });
       }
-
-      // Handle GET requests (SSE connection)
-      if (req.method === 'GET') {
-        await transport.handleGet(req, res, sessionId);
-        return;
-      }
-
-      // Handle DELETE requests (disconnect/cleanup)
-      if (req.method === 'DELETE') {
-        // Clean up transport and server for this session
-        if (sessionId) {
-          transport.cleanup(sessionId);
-        }
-        res.status(200).json({
-          jsonrpc: '2.0',
-          result: { status: 'disconnected' },
-          id: null
-        });
-        return;
-      }
-
-      // Handle OPTIONS for CORS
-      if (req.method === 'OPTIONS') {
-        res.status(200).json({});
-        return;
-      }
-
-      res.status(405).json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32601,
-          message: 'Method not allowed'
-        },
-        id: null
-      });
 
     } catch (error) {
       console.error('MCP request error:', error);

@@ -18,8 +18,9 @@ const optionalOAuth = (req: any, res: any, next: any) => {
 };
 
 // MCP endpoints with optional OAuth
-router.all('/:slug/*', mcpRateLimit, optionalOAuth, mcpController.handleMCPRequest.bind(mcpController));
+// Specific route must come before wildcard route
 router.all('/:slug', mcpRateLimit, optionalOAuth, mcpController.handleMCPRequest.bind(mcpController));
+router.all('/:slug/*', mcpRateLimit, optionalOAuth, mcpController.handleMCPRequest.bind(mcpController));
 
 // Analytics endpoint requires authentication
 router.get('/analytics/:exchangeId', authenticateToken, mcpController.getAnalytics.bind(mcpController));

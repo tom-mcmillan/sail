@@ -36,7 +36,8 @@ async function getExchangeInfo(slug) {
     const fetch = (await import('node-fetch')).default;
     
     // First get exchange from API
-    const response = await fetch(`http://localhost:3001/api/exchanges`);
+    const baseUrl = process.env.MCP_API_BASE_URL || 'https://sailmcp.com';
+    const response = await fetch(`${baseUrl}/api/exchanges`);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
