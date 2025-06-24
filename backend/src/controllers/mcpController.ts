@@ -22,6 +22,7 @@ class MCPControllerClass {
    */
   async handleMCPRequest(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
+      console.log(`MCP Request: ${req.method} ${req.url}`);
       const { slug } = req.params;
       const sessionId = req.headers['mcp-session-id'] as string;
       
