@@ -127,7 +127,7 @@ class MCPControllerClass {
     const server = mcpServer.getServer();
 
     // Handle incoming messages from transport
-    transport.on('message', async (message: JSONRPCMessage, respond: (response: JSONRPCResponse) => void) => {
+    transport.on('message', async (message: JSONRPCMessage, session: any, respond: (response: JSONRPCResponse) => void) => {
       try {
         // Track analytics
         await this.trackAnalytics(exchange.id, message);

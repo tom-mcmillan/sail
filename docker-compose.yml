@@ -42,7 +42,7 @@ services:
       JWT_SECRET: dev-secret-key-change-in-production
       PORT: 3001
       NODE_ENV: development
-      BASE_URL: http://localhost:3000
+      BASE_URL: https://sailmcp.com
     ports:
       - "3001:3001"
     volumes:
@@ -61,8 +61,8 @@ services:
       dockerfile: Dockerfile
     container_name: sail-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3001
-      NEXT_PUBLIC_BASE_URL: http://localhost:3000
+      NEXT_PUBLIC_API_URL: https://sailmcp.com/api
+      NEXT_PUBLIC_BASE_URL: https://sailmcp.com
     ports:
       - "3000:3000"
     depends_on:

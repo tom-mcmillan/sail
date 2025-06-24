@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { JSONRPCMessage, JSONRPCRequest, JSONRPCResponse, JSONRPCNotification } from '@modelcontextprotocol/sdk/types.js';
 
 interface Session {
@@ -9,6 +10,7 @@ interface Session {
   messageQueue: Array<{ id: string; data: any }>;
   createdAt: Date;
   lastActivity: Date;
+  isInitialized: boolean;
 }
 
 export class StreamableHTTPTransport extends EventEmitter {
@@ -26,6 +28,19 @@ export class StreamableHTTPTransport extends EventEmitter {
    */
   async handlePost(req: Request, res: Response, sessionId?: string): Promise<void> {
     try {
+      // Validate content type
+      if (!req.headers['content-type']?.includes('application/json')) {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32600,
+            message: 'Content-Type must be application/json'
+          },
+          id: null
+        });
+        return;
+      }
+
       const message = req.body as JSONRPCMessage;
       
       if (!this.isValidJSONRPCMessage(message)) {
@@ -40,15 +55,67 @@ export class StreamableHTTPTransport extends EventEmitter {
         return;
       }
 
-      // Get or create session
-      const session = this.getOrCreateSession(sessionId || this.generateSessionId());
-      session.lastActivity = new Date();
+      // Handle session validation based on message type
+      let session: Session;
+      
+      if ('method' in message && message.method === 'initialize') {
+        // Initialize creates a new session
+        session = this.getOrCreateSession(this.generateSessionId());
+        session.isInitialized = false;
+      } else {
+        // All other requests require existing session
+        if (!sessionId) {
+          res.status(400).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32600,
+              message: 'Missing session ID'
+            },
+            id: 'id' in message ? message.id : null
+          });
+          return;
+        }
+        
+        const existingSession = this.sessions.get(sessionId);
+        if (!existingSession) {
+          res.status(400).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32600,
+              message: 'Invalid session ID'
+            },
+            id: 'id' in message ? message.id : null
+          });
+          return;
+        }
+        
+        session = existingSession;
 
+        // Check if session is initialized for non-initialize requests
+        if ('method' in message && message.method !== 'initialize' && !session.isInitialized) {
+          res.status(400).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32600,
+              message: 'Session not initialized'
+            },
+            id: 'id' in message ? message.id : null
+          });
+          return;
+        }
+      }
+
+      session.lastActivity = new Date();
+      
       // Set session ID header
       res.setHeader('Mcp-Session-Id', session.id);
 
       // Emit the message for processing
-      this.emit('message', message, (response: JSONRPCResponse) => {
+      this.emit('message', message, session, (response: JSONRPCResponse) => {
+        // Mark session as initialized after successful initialize
+        if ('method' in message && message.method === 'initialize' && 'result' in response) {
+          session.isInitialized = true;
+        }
         res.json(response);
       });
 
@@ -150,7 +217,8 @@ export class StreamableHTTPTransport extends EventEmitter {
         lastEventId: 0,
         messageQueue: [],
         createdAt: new Date(),
-        lastActivity: new Date()
+        lastActivity: new Date(),
+        isInitialized: false
       };
       this.sessions.set(sessionId, session);
     }
@@ -158,7 +226,7 @@ export class StreamableHTTPTransport extends EventEmitter {
   }
 
   private generateSessionId(): string {
-    return `mcp-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    return randomUUID();
   }
 
   /**
