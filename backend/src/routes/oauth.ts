@@ -4,7 +4,7 @@ import { oauthServer } from '../services/oauth/authServer';
 const router = Router();
 
 // OAuth Authorization Server Metadata (RFC 8414)
-router.get('/.well-known/oauth-authorization-server', oauthServer.getAuthorizationServerMetadata.bind(oauthServer));
+router.get('/oauth-authorization-server', oauthServer.getAuthorizationServerMetadata.bind(oauthServer));
 
 // Dynamic Client Registration (RFC 7591)
 router.post('/register', oauthServer.registerClient.bind(oauthServer));

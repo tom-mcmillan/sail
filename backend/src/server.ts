@@ -106,7 +106,7 @@ class SailMCPServer {
       });
     });
 
-    // OAuth Authorization Server Metadata (must be at root level)
+    // OAuth Authorization Server Metadata (RFC 8414)
     this.app.use('/.well-known', oauthRoutes);
     
     // OAuth endpoints
