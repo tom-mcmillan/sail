@@ -11,6 +11,7 @@ import { redis } from './services/redis';
 import authRoutes from './routes/auth';
 import exchangeRoutes from './routes/exchanges';
 import mcpRoutes from './routes/mcp';
+import oauthRoutes from './routes/oauth';
 
 // Load environment variables
 // In production, Docker Compose handles environment variables
@@ -71,7 +72,14 @@ class SailMCPServer {
       },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization']
+      allowedHeaders: [
+        'Content-Type', 
+        'Authorization', 
+        'Mcp-Session-Id',
+        'Last-Event-ID',
+        'Cache-Control'
+      ],
+      exposedHeaders: ['Mcp-Session-Id']
     }));
 
     // Body parsing middleware
@@ -97,6 +105,12 @@ class SailMCPServer {
         service: 'GetSail Backend'
       });
     });
+
+    // OAuth Authorization Server Metadata (must be at root level)
+    this.app.use('/.well-known', oauthRoutes);
+    
+    // OAuth endpoints
+    this.app.use('/oauth', oauthRoutes);
 
     // API routes
     this.app.use('/api/auth', authRoutes);

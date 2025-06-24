@@ -1,14 +1,29 @@
 import { Request, Response } from 'express';
 import { db } from '../services/database';
-import { redis } from '../services/redis';
-import { fileSystemService } from '../services/fileSystem';
+import { StreamableHTTPTransport } from '../services/mcp/transport';
+import { MCPServer } from '../services/mcp/server';
+import { validateOAuthToken, requireScope } from '../middleware/oauth';
+import { JSONRPCMessage, JSONRPCRequest, JSONRPCResponse, JSONRPCNotification } from '@modelcontextprotocol/sdk/types.js';
 
-export class MCPController {
-  async handleMCPRequest(req: Request, res: Response): Promise<void> {
+interface AuthenticatedRequest extends Request {
+  oauth?: {
+    clientId: string;
+    scopes: string[];
+    userId?: string;
+  };
+}
+
+class MCPControllerClass {
+  private transports: Map<string, StreamableHTTPTransport> = new Map();
+  private servers: Map<string, MCPServer> = new Map();
+
+  /**
+   * Handle MCP requests using Streamable HTTP transport
+   */
+  async handleMCPRequest(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { slug } = req.params;
-      const method = req.method;
-      const path = req.path;
+      const sessionId = req.headers['mcp-session-id'] as string;
       
       // Get exchange info
       const exchangeResult = await db.query(
@@ -17,9 +32,12 @@ export class MCPController {
       );
 
       if (exchangeResult.rows.length === 0) {
-        res.status(404).json({ 
-          error: 'MCP server not found',
+        res.status(404).json({
           jsonrpc: '2.0',
+          error: {
+            code: -32002,
+            message: 'MCP server not found'
+          },
           id: null
         });
         return;
@@ -27,347 +45,166 @@ export class MCPController {
 
       const exchange = exchangeResult.rows[0];
 
-      // Handle MCP server discovery (GET request to root)
-      if (method === 'GET' && !req.url.includes('/tools') && !req.url.includes('/call')) {
-        res.json({
-          name: exchange.name,
-          version: '1.0.0',
-          description: exchange.description,
-          capabilities: {
-            tools: {},
-            resources: {}
-          },
-          serverInfo: {
-            name: exchange.name,
-            version: '1.0.0'
-          }
-        });
-        return;
-      }
+      // Get or create transport for this exchange
+      let transport = this.transports.get(slug);
+      if (!transport) {
+        transport = new StreamableHTTPTransport();
+        this.transports.set(slug, transport);
 
-      // Handle tools discovery
-      if (method === 'GET' && req.url.includes('/tools')) {
-        const tools = await this.getToolsForExchange(exchange);
-        res.json({
-          jsonrpc: '2.0',
-          result: {
-            tools: tools
-          }
-        });
-        return;
-      }
-
-      // Handle tool calls (POST requests)
-      if (method === 'POST') {
-        const mcpResponse = await this.handleToolCall(exchange, req);
-        res.json(mcpResponse);
-        return;
-      }
-
-      // Update analytics
-      await db.query(
-        'UPDATE exchanges SET last_accessed = NOW(), queries_count = queries_count + 1 WHERE id = $1',
-        [exchange.id]
-      );
-
-      // Default response
-      res.json({
-        jsonrpc: '2.0',
-        result: {
-          message: 'MCP server active',
-          server: exchange.name
+        // Get or create MCP server
+        let mcpServer = this.servers.get(slug);
+        if (!mcpServer) {
+          mcpServer = new MCPServer(exchange);
+          this.servers.set(slug, mcpServer);
         }
+
+        // Connect transport to server
+        this.setupTransportHandlers(transport, mcpServer, exchange);
+      }
+
+      // Handle POST requests (JSON-RPC messages)
+      if (req.method === 'POST') {
+        await transport.handlePost(req, res, sessionId);
+        return;
+      }
+
+      // Handle GET requests (SSE connection)
+      if (req.method === 'GET') {
+        await transport.handleGet(req, res, sessionId);
+        return;
+      }
+
+      // Handle OPTIONS for CORS
+      if (req.method === 'OPTIONS') {
+        res.status(200).json({});
+        return;
+      }
+
+      res.status(405).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32601,
+          message: 'Method not allowed'
+        },
+        id: null
       });
 
     } catch (error) {
       console.error('MCP request error:', error);
-      res.status(500).json({ 
+      res.status(500).json({
         jsonrpc: '2.0',
         error: {
           code: -32603,
-          message: 'Internal error'
+          message: 'Internal error',
+          data: error instanceof Error ? error.message : 'Unknown error'
         },
         id: null
       });
     }
   }
 
-  private async getToolsForExchange(exchange: any): Promise<any[]> {
-    switch (exchange.type) {
-      case 'local':
-        return [
-          {
-            name: 'search_documents',
-            description: 'Search through documents in the folder',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                query: { type: 'string', description: 'Search query' },
-                limit: { type: 'number', default: 10 }
-              },
-              required: ['query']
+  /**
+   * Set up handlers between transport and MCP server
+   */
+  private setupTransportHandlers(transport: StreamableHTTPTransport, mcpServer: MCPServer, exchange: any): void {
+    const server = mcpServer.getServer();
+
+    // Handle incoming messages from transport
+    transport.on('message', async (message: JSONRPCMessage, respond: (response: JSONRPCResponse) => void) => {
+      try {
+        // Track analytics
+        await this.trackAnalytics(exchange.id, message);
+
+        // Process message through MCP server
+        if ('method' in message) {
+          // It's a request or notification
+          const request = message as JSONRPCRequest;
+          
+          try {
+            const result = await this.processRequest(server, request);
+            
+            if ('id' in request && request.id !== null) {
+              // It's a request, send response
+              respond({
+                jsonrpc: '2.0',
+                result,
+                id: request.id
+              });
             }
-          },
-          {
-            name: 'get_document',
-            description: 'Get content of a specific document',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                file_path: { type: 'string', description: 'Relative path to the file' }
-              },
-              required: ['file_path']
-            }
-          },
-          {
-            name: 'list_files',
-            description: 'List all available files',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                limit: { type: 'number', default: 20 }
-              }
+            // If it's a notification (no id), don't send response
+          } catch (error: any) {
+            if ('id' in request && request.id !== null) {
+              respond({
+                jsonrpc: '2.0',
+                error: {
+                  code: error.code || -32603,
+                  message: error.message || 'Internal error',
+                  data: error.data
+                },
+                id: request.id
+              } as any);
             }
           }
-        ];
-      default:
-        return [];
-    }
-  }
-
-  private async handleToolCall(exchange: any, req: Request): Promise<any> {
-    try {
-      const { method, params, id } = req.body;
-      
-      if (method === 'tools/call') {
-        const { name, arguments: args } = params;
-        
-        let result;
-        switch (name) {
-          case 'search_documents':
-            result = await this.searchDocuments(exchange.config.folderPath, args.query, args.limit || 10);
-            break;
-          case 'get_document':
-            result = await this.getDocument(exchange.config.folderPath, args.file_path);
-            break;
-          case 'list_files':
-            result = await this.listFiles(exchange.config.folderPath, args.limit || 20);
-            break;
-          default:
-            return {
-              jsonrpc: '2.0',
-              error: {
-                code: -32601,
-                message: `Method ${name} not found`
-              },
-              id
-            };
         }
-        
-        return {
-          jsonrpc: '2.0',
-          result,
-          id
-        };
+      } catch (error) {
+        console.error('Error processing MCP message:', error);
+        if ('id' in message && message.id !== null) {
+          respond({
+            jsonrpc: '2.0',
+            error: {
+              code: -32603,
+              message: 'Internal error'
+            },
+            id: message.id
+          } as any);
+        }
       }
-      
-      return {
-        jsonrpc: '2.0',
-        error: {
-          code: -32601,
-          message: 'Method not found'
-        },
-        id
-      };
-    } catch (error) {
-      return {
-        jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: error instanceof Error ? error.message : 'Internal error'
-        },
-        id: req.body?.id
-      };
-    }
+    });
   }
 
-  private async routeMCPRequest(exchange: any, req: Request): Promise<any> {
-    switch (exchange.type) {
-      case 'local':
-        return await this.handleLocalMCPRequest(exchange, req);
-      case 'google-drive':
-        return await this.handleGoogleDriveMCPRequest(exchange, req);
-      case 'github':
-        return await this.handleGitHubMCPRequest(exchange, req);
-      default:
-        throw new Error(`Unknown exchange type: ${exchange.type}`);
-    }
-  }
-
-  private async handleLocalMCPRequest(exchange: any, req: Request): Promise<any> {
-    const { metadata, config } = exchange;
-    const { folderPath } = config;
-
-    if (!folderPath) {
-      return { error: 'No folder path configured for this exchange' };
-    }
+  /**
+   * Process a JSON-RPC request through the MCP server
+   */
+  private async processRequest(server: any, request: JSONRPCRequest): Promise<any> {
+    const handlers = server.requestHandlers;
+    const handler = handlers.get(request.method);
     
-    if (req.url.includes('/tools')) {
-      return {
-        tools: [
-          {
-            name: 'search_documents',
-            description: 'Search through documents in the folder',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                query: { type: 'string', description: 'Search query' },
-                limit: { type: 'number', default: 10, minimum: 1, maximum: 50 }
-              },
-              required: ['query']
-            }
-          },
-          {
-            name: 'get_document',
-            description: 'Get content of a specific document by relative path',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                file_path: { type: 'string', description: 'Relative path to the file' }
-              },
-              required: ['file_path']
-            }
-          },
-          {
-            name: 'list_files',
-            description: 'List all available files in the folder',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                limit: { type: 'number', default: 20, minimum: 1, maximum: 100 }
-              }
-            }
-          }
-        ]
+    if (!handler) {
+      throw {
+        code: -32601,
+        message: `Method not found: ${request.method}`
       };
     }
 
-    // Handle tool calls based on the request body
-    if (req.method === 'POST' && req.body) {
-      const { name: toolName, arguments: toolArgs } = req.body;
-      
-      switch (toolName) {
-        case 'search_documents':
-          return await this.searchDocuments(folderPath, toolArgs.query, toolArgs.limit || 10);
-        
-        case 'get_document':
-          return await this.getDocument(folderPath, toolArgs.file_path);
-        
-        case 'list_files':
-          return await this.listFiles(folderPath, toolArgs.limit || 20);
+    return await handler(request);
+  }
+
+  /**
+   * Track analytics for MCP requests
+   */
+  private async trackAnalytics(exchangeId: string, message: JSONRPCMessage): Promise<void> {
+    try {
+      if ('method' in message) {
+        await db.query(`
+          INSERT INTO analytics (exchange_id, query, response_time, created_at)
+          VALUES ($1, $2, $3, NOW())
+        `, [exchangeId, message.method, 0]); // Response time will be updated later
       }
-    }
 
-    // Default response for MCP server info
-    return { 
-      name: exchange.name,
-      description: exchange.description,
-      type: 'local',
-      folder_path: folderPath,
-      status: 'active',
-      available_tools: ['search_documents', 'get_document', 'list_files'],
-      file_stats: metadata
-    };
+      // Update exchange last accessed
+      await db.query(
+        'UPDATE exchanges SET last_accessed = NOW(), queries_count = queries_count + 1 WHERE id = $1',
+        [exchangeId]
+      );
+    } catch (error) {
+      console.error('Analytics tracking error:', error);
+      // Don't fail the request if analytics fails
+    }
   }
 
-  private async handleGoogleDriveMCPRequest(exchange: any, req: Request): Promise<any> {
-    if (req.url.includes('/tools')) {
-      return {
-        tools: [
-          {
-            name: 'search_drive',
-            description: 'Search Google Drive documents',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                query: { type: 'string', description: 'Search query' },
-                limit: { type: 'number', default: 10 }
-              },
-              required: ['query']
-            }
-          },
-          {
-            name: 'get_document',
-            description: 'Get Google Drive document content',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                document_id: { type: 'string', description: 'Google Drive document ID' }
-              },
-              required: ['document_id']
-            }
-          }
-        ]
-      };
-    }
-
-    return { 
-      message: 'Google Drive MCP handler active',
-      exchange_name: exchange.name,
-      type: 'google-drive',
-      available_tools: ['search_drive', 'get_document']
-    };
-  }
-
-  private async handleGitHubMCPRequest(exchange: any, req: Request): Promise<any> {
-    if (req.url.includes('/tools')) {
-      return {
-        tools: [
-          {
-            name: 'search_code',
-            description: 'Search repository code and documentation',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                query: { type: 'string', description: 'Search query' },
-                limit: { type: 'number', default: 10 }
-              },
-              required: ['query']
-            }
-          },
-          {
-            name: 'get_file',
-            description: 'Get file content from repository',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                file_path: { type: 'string', description: 'File path in repository' }
-              },
-              required: ['file_path']
-            }
-          },
-          {
-            name: 'list_commits',
-            description: 'List recent commits',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                limit: { type: 'number', default: 10 }
-              }
-            }
-          }
-        ]
-      };
-    }
-
-    return { 
-      message: 'GitHub MCP handler active',
-      exchange_name: exchange.name,
-      type: 'github',
-      available_tools: ['search_code', 'get_file', 'list_commits']
-    };
-  }
-
+  /**
+   * Get analytics for an exchange (existing method)
+   */
   async getAnalytics(req: Request, res: Response): Promise<void> {
     try {
       const { exchangeId } = req.params;
@@ -433,98 +270,13 @@ export class MCPController {
     }
   }
 
-  // Helper methods for local file operations
-  private async searchDocuments(folderPath: string, query: string, limit: number): Promise<any> {
-    try {
-      const files = await fileSystemService.searchFiles(folderPath, query, limit);
-      
-      return {
-        content: [{
-          type: 'text',
-          text: `Found ${files.length} documents matching "${query}":\n\n` +
-                files.map(file => 
-                  `📄 **${file.name}**\n` +
-                  `   Path: ${file.relativePath}\n` +
-                  `   Size: ${this.formatFileSize(file.size)}\n` +
-                  `   Type: ${file.type}\n` +
-                  `   Modified: ${file.lastModified.toLocaleDateString()}\n`
-                ).join('\n')
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error searching documents: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }]
-      };
-    }
-  }
-
-  private async getDocument(folderPath: string, relativePath: string): Promise<any> {
-    try {
-      const fullPath = require('path').join(folderPath, relativePath);
-      
-      // Security check - ensure the path is within the folder
-      if (!fullPath.startsWith(folderPath)) {
-        throw new Error('Invalid file path - outside of allowed folder');
-      }
-
-      const content = await fileSystemService.readFileContent(fullPath);
-      
-      return {
-        content: [{
-          type: 'text',
-          text: `**File: ${relativePath}**\n\n${content}`
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error reading document: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }]
-      };
-    }
-  }
-
-  private async listFiles(folderPath: string, limit: number): Promise<any> {
-    try {
-      const allFiles = await fileSystemService.getAllFiles(folderPath);
-      const supportedFiles = allFiles
-        .filter(file => fileSystemService.isSupportedFileType(file.extension))
-        .slice(0, limit);
-      
-      return {
-        content: [{
-          type: 'text',
-          text: `📁 **Available Documents** (${supportedFiles.length} of ${allFiles.length} total files)\n\n` +
-                supportedFiles.map(file => 
-                  `📄 **${file.name}**\n` +
-                  `   Path: ${file.relativePath}\n` +
-                  `   Size: ${this.formatFileSize(file.size)}\n` +
-                  `   Type: ${file.type}\n` +
-                  `   Modified: ${file.lastModified.toLocaleDateString()}\n`
-                ).join('\n')
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error listing files: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }]
-      };
-    }
-  }
-
-  private formatFileSize(bytes: number): string {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  /**
+   * Clean up resources for inactive exchanges
+   */
+  cleanup(): void {
+    // This would be called periodically to clean up inactive transports/servers
+    // For now, we'll keep them in memory for the session
   }
 }
 
-export const mcpController = new MCPController();
+export const mcpController = new MCPControllerClass();
