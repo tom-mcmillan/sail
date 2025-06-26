@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { oauthServer } from '../services/oauth/authServer';
+import oauthConsentRouter from './oauth-consent';
 
 const router = Router();
 
@@ -17,5 +18,8 @@ router.post('/token', oauthServer.token.bind(oauthServer));
 
 // Token Introspection (RFC 7662)
 router.post('/introspect', oauthServer.introspect.bind(oauthServer));
+
+// Consent routes
+router.use('/', oauthConsentRouter);
 
 export default router;

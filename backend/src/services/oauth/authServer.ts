@@ -169,34 +169,17 @@ export class OAuthAuthorizationServer {
         return this.sendAuthorizationError(res, redirect_uri as string, 'invalid_request', state as string, 'PKCE required for public clients');
       }
 
-      // For MCP servers, we'll auto-approve since they're typically machine-to-machine
-      // In a real implementation, you'd show a consent screen for user authorization
-      const authCode = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+      // Redirect to consent screen for user authorization
+      const consentUrl = new URL(`${this.baseUrl}/oauth/consent`);
+      consentUrl.searchParams.set('client_id', client_id as string);
+      consentUrl.searchParams.set('redirect_uri', redirect_uri as string || allowedUris[0]);
+      consentUrl.searchParams.set('response_type', 'code');
+      consentUrl.searchParams.set('scope', scope as string);
+      if (state) consentUrl.searchParams.set('state', state as string);
+      if (code_challenge) consentUrl.searchParams.set('code_challenge', code_challenge as string);
+      if (code_challenge_method) consentUrl.searchParams.set('code_challenge_method', code_challenge_method as string);
 
-      // Store authorization code
-      await db.query(`
-        INSERT INTO oauth_authorization_codes (
-          code, client_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-      `, [
-        authCode,
-        client_id,
-        redirect_uri || allowedUris[0],
-        scope.toString().split(' '),
-        code_challenge,
-        code_challenge_method,
-        expiresAt
-      ]);
-
-      // Redirect with authorization code
-      const redirectUrl = new URL(redirect_uri as string || allowedUris[0]);
-      redirectUrl.searchParams.set('code', authCode);
-      if (state) {
-        redirectUrl.searchParams.set('state', state as string);
-      }
-
-      res.redirect(redirectUrl.toString());
+      res.redirect(consentUrl.toString());
     } catch (error) {
       console.error('Authorization error:', error);
       res.status(500).json({
