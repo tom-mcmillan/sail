@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Exchange, CreateExchangeForm } from '@/types';
-// import { api } from '@/utils/api';
+import { api } from '@/utils/api';
 import { MOCK_EXCHANGES } from '@/constants';
 
 export const useExchanges = () => {
@@ -13,26 +13,21 @@ export const useExchanges = () => {
     setError(null);
     
     try {
-      // For now, simulate API call - replace with real API later
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const response = await api.createExchange(formData);
       
-      const newExchange: Exchange = {
-        id: `exchange-${Date.now()}`,
-        name: formData.name,
-        description: formData.description,
-        type: formData.type as Exchange['type'],
-        status: 'processing',
-        queries: 0,
-        lastAccess: 'Never',
-        url: `https://getsail.net/mcp/${formData.name.toLowerCase().replace(/\s+/g, '-')}`,
-        createdAt: new Date().toISOString(),
-        privacy: formData.privacy
-      };
+      if (response.error) {
+        throw new Error(response.error);
+      }
       
+      if (!response.data) {
+        throw new Error('No data returned from API');
+      }
+      
+      const newExchange = response.data;
       setExchanges(prev => [newExchange, ...prev]);
       return newExchange;
-    } catch {
-      const errorMessage = 'Failed to create exchange';
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to create exchange';
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
@@ -43,11 +38,15 @@ export const useExchanges = () => {
   const deleteExchange = useCallback(async (id: string): Promise<void> => {
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const response = await api.deleteExchange(id);
+      
+      if (response.error) {
+        throw new Error(response.error);
+      }
+      
       setExchanges(prev => prev.filter(ex => ex.id !== id));
-    } catch {
-      const errorMessage = 'Failed to delete exchange';
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete exchange';
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
