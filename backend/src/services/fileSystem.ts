@@ -115,6 +115,24 @@ export class FileSystemService extends EventEmitter {
         case '.csv':
         case '.html':
         case '.rtf':
+        case '.js':
+        case '.ts':
+        case '.jsx':
+        case '.tsx':
+        case '.py':
+        case '.java':
+        case '.c':
+        case '.cpp':
+        case '.h':
+        case '.sh':
+        case '.yaml':
+        case '.yml':
+        case '.xml':
+        case '.sql':
+        case '.php':
+        case '.rb':
+        case '.go':
+        case '.rs':
           return await fs.readFile(filePath, 'utf-8');
         
         case '.pdf':
@@ -157,7 +175,9 @@ export class FileSystemService extends EventEmitter {
   isSupportedFileType(extension: string): boolean {
     const supportedExtensions = [
       'txt', 'md', 'pdf', 'doc', 'docx', 
-      'json', 'csv', 'html', 'rtf'
+      'json', 'csv', 'html', 'rtf',
+      'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h',
+      'sh', 'yaml', 'yml', 'xml', 'sql', 'php', 'rb', 'go', 'rs'
     ];
     
     return supportedExtensions.includes(extension.toLowerCase());
@@ -202,11 +222,38 @@ export class FileSystemService extends EventEmitter {
     const allFiles = await this.getAllFiles(folderPath);
     const supportedFiles = allFiles.filter(file => this.isSupportedFileType(file.extension));
     
-    // Simple search by filename for now
-    const matchingFiles = supportedFiles.filter(file => 
-      file.name.toLowerCase().includes(query.toLowerCase()) ||
-      file.relativePath.toLowerCase().includes(query.toLowerCase())
-    );
+    const matchingFiles: FileInfo[] = [];
+    const queryLower = query.toLowerCase();
+    
+    for (const file of supportedFiles) {
+      // Search by filename and path first
+      if (file.name.toLowerCase().includes(queryLower) ||
+          file.relativePath.toLowerCase().includes(queryLower)) {
+        matchingFiles.push(file);
+        if (matchingFiles.length >= limit) break;
+        continue;
+      }
+      
+      // Search by file content for text-based files
+      try {
+        const content = await this.readFileContent(file.path);
+        if (content && 
+            content !== 'File too large to process' &&
+            content !== 'Error reading file content' &&
+            !content.includes('not yet implemented') &&
+            content.toLowerCase().includes(queryLower)) {
+          matchingFiles.push(file);
+        }
+      } catch (error) {
+        // Skip files that can't be read
+        console.error(`Error reading file for search ${file.path}:`, error);
+      }
+      
+      // Stop if we've reached the limit
+      if (matchingFiles.length >= limit) {
+        break;
+      }
+    }
     
     return matchingFiles.slice(0, limit);
   }
