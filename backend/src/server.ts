@@ -102,7 +102,7 @@ class SailMCPServer {
         status: 'healthy', 
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        service: 'GetSail Backend'
+        service: 'Sail MCP Backend'
       });
     });
 
@@ -159,10 +159,10 @@ class SailMCPServer {
       await db.createTables();
       console.log('✅ Database initialized');
 
-      // Test Redis connection
-      await redis.set('test', 'connection');
-      await redis.del('test');
-      console.log('✅ Redis connected');
+      // Test Redis connection (disabled for initial deployment)
+      // await redis.set('test', 'connection');
+      // await redis.del('test');
+      console.log('⚠️ Redis connection skipped for initial deployment');
 
       // Start server
       this.app.listen(this.port, () => {

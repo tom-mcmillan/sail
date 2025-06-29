@@ -4,10 +4,16 @@ import { config } from 'dotenv';
 config();
 
 class RedisService {
-  private client: Redis;
+  private client?: Redis;
 
   constructor() {
-    this.client = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+    // Skip Redis connection if REDIS_URL is not set
+    if (!process.env.REDIS_URL) {
+      console.log('⚠️ Redis connection skipped - REDIS_URL not set');
+      return;
+    }
+
+    this.client = new Redis(process.env.REDIS_URL);
 
     this.client.on('error', (err) => {
       console.error('Redis error:', err);
@@ -19,10 +25,12 @@ class RedisService {
   }
 
   async get(key: string): Promise<string | null> {
+    if (!this.client) return null;
     return this.client.get(key);
   }
 
   async set(key: string, value: string, ttl?: number): Promise<void> {
+    if (!this.client) return;
     if (ttl) {
       await this.client.setex(key, ttl, value);
     } else {
@@ -31,18 +39,22 @@ class RedisService {
   }
 
   async del(key: string): Promise<void> {
+    if (!this.client) return;
     await this.client.del(key);
   }
 
   async incr(key: string): Promise<number> {
+    if (!this.client) return 0;
     return this.client.incr(key);
   }
 
   async expire(key: string, seconds: number): Promise<void> {
+    if (!this.client) return;
     await this.client.expire(key, seconds);
   }
 
   async disconnect(): Promise<void> {
+    if (!this.client) return;
     await this.client.disconnect();
   }
 }
