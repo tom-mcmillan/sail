@@ -195,6 +195,27 @@ class DatabaseService {
     }
   }
 
+  async migrate() {
+    try {
+      // Add knowledge_type column if it doesn't exist
+      await this.query(`
+        ALTER TABLE exchanges 
+        ADD COLUMN IF NOT EXISTS knowledge_type VARCHAR(50) DEFAULT 'local' 
+        CHECK (knowledge_type IN ('local', 'github', 'google-drive', 'zotero'));
+      `);
+      
+      // Add index for knowledge_type if it doesn't exist
+      await this.query(`
+        CREATE INDEX IF NOT EXISTS idx_exchanges_knowledge_type ON exchanges(knowledge_type);
+      `);
+      
+      console.log('✅ Database migration completed');
+    } catch (error) {
+      console.error('❌ Error running migration:', error);
+      throw error;
+    }
+  }
+
   async close() {
     await this.pool.end();
   }

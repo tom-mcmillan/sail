@@ -82,7 +82,7 @@ export class ExchangeController {
         success: true,
         data: {
           ...exchange,
-          url: `${process.env.BASE_URL}/mcp/${slug}`
+          url: `${process.env.BASE_URL}/${slug}`
         }
       });
     } catch (error) {
@@ -133,7 +133,7 @@ export class ExchangeController {
 
       const exchanges = result.rows.map(exchange => ({
         ...exchange,
-        url: `${process.env.BASE_URL}/mcp/${exchange.slug}`
+        url: `${process.env.BASE_URL}/${exchange.slug}`
       }));
 
       res.json({

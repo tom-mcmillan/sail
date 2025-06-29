@@ -74,6 +74,7 @@ export function GetSailApp() {
           name: formData.name,
           description: formData.description,
           type: 'local',
+          knowledge_type: 'local',
           privacy: formData.privacy,
           config: {
             folderPath: formData.folderPath

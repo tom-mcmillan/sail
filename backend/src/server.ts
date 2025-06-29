@@ -11,6 +11,7 @@ import { redis } from './services/redis';
 import authRoutes from './routes/auth';
 import exchangeRoutes from './routes/exchanges';
 import mcpRoutes from './routes/mcp';
+import universalMcpRoutes from './routes/universalMcp';
 import oauthRoutes from './routes/oauth';
 
 // Load environment variables
@@ -118,6 +119,9 @@ class SailMCPServer {
     
     // MCP routes (public)
     this.app.use('/mcp', mcpRoutes);
+    
+    // Universal MCP endpoint - works with all clients
+    this.app.use('/', universalMcpRoutes);
 
     // File serving for local storage
     this.app.get('/files/:filename', async (req, res) => {
@@ -158,6 +162,10 @@ class SailMCPServer {
       // Initialize database
       await db.createTables();
       console.log('✅ Database initialized');
+      
+      // Run migrations
+      await db.migrate();
+      console.log('✅ Database migrations completed');
 
       // Test Redis connection (disabled for initial deployment)
       // await redis.set('test', 'connection');
