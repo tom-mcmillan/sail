@@ -86,7 +86,8 @@ export class UniversalMCPServer {
       // Create MCP server and transport for this session
       const server = this.createMCPServer(adapter);
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => newSessionId
+        sessionIdGenerator: () => newSessionId,
+        acceptContentTypes: ['application/json'] // More flexible content type handling
       });
       
       // Connect server to transport
