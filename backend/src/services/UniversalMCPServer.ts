@@ -206,10 +206,15 @@ export class UniversalMCPServer {
   private setupServerHandlers(server: Server, adapter: KnowledgeStoreAdapter): void {
     // Initialize handler
     server.setRequestHandler(InitializeRequestSchema, async (request) => {
+      console.log('Initialize request received for adapter:', adapter.displayName);
       const tools = adapter.getTools();
       const prompts = adapter.getPrompts();
       
-      return {
+      console.log('Initialize - Tools available:', tools.length);
+      console.log('Initialize - Tool names:', tools.map(t => t.name));
+      console.log('Initialize - Prompts available:', prompts.length);
+      
+      const response = {
         protocolVersion: '1.0',
         capabilities: {
           tools: tools.length > 0 ? {} : undefined,
@@ -222,6 +227,9 @@ export class UniversalMCPServer {
           description: adapter.description
         }
       };
+      
+      console.log('Initialize response capabilities:', response.capabilities);
+      return response;
     });
 
     // Ping handler
@@ -231,7 +239,10 @@ export class UniversalMCPServer {
 
     // Tools
     server.setRequestHandler(ListToolsRequestSchema, async () => {
+      console.log('ListTools request received');
       const tools = adapter.getTools();
+      console.log('Tools from adapter:', tools.length, 'tools');
+      console.log('Tool names:', tools.map(t => t.name));
       return { tools };
     });
 
