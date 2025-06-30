@@ -4,6 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   InitializeRequestSchema,
+  InitializedNotificationSchema,
   PingRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
@@ -190,9 +191,9 @@ export class UniversalMCPServer {
       },
       {
         capabilities: {
-          tools: tools.length > 0 ? {} : undefined,
-          resources: {},
-          prompts: prompts.length > 0 ? {} : undefined
+          tools: tools.length > 0 ? { listChanged: true } : undefined,
+          resources: { subscribe: false, listChanged: true },
+          prompts: prompts.length > 0 ? { listChanged: true } : undefined
         }
       }
     );
@@ -214,13 +215,23 @@ export class UniversalMCPServer {
       console.log('Initialize - Tool names:', tools.map(t => t.name));
       console.log('Initialize - Prompts available:', prompts.length);
       
+      const capabilities: any = {};
+      
+      // Only declare capabilities we actually support
+      if (tools.length > 0) {
+        capabilities.tools = { listChanged: true };
+      }
+      
+      // Always support resources
+      capabilities.resources = { subscribe: false, listChanged: true };
+      
+      if (prompts.length > 0) {
+        capabilities.prompts = { listChanged: true };
+      }
+      
       const response = {
         protocolVersion: '1.0',
-        capabilities: {
-          tools: tools.length > 0 ? {} : undefined,
-          resources: {},
-          prompts: prompts.length > 0 ? {} : undefined
-        },
+        capabilities,
         serverInfo: {
           name: adapter.displayName,
           version: '1.0.0',
@@ -230,6 +241,11 @@ export class UniversalMCPServer {
       
       console.log('Initialize response capabilities:', response.capabilities);
       return response;
+    });
+
+    // Initialized notification handler
+    server.setNotificationHandler(InitializedNotificationSchema, async () => {
+      console.log('Initialized notification received - MCP handshake complete');
     });
 
     // Ping handler
