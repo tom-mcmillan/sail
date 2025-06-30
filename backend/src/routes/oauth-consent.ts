@@ -18,7 +18,7 @@ interface ConsentRequest extends Request {
 }
 
 // Show consent screen
-router.get('/oauth/consent', async (req: ConsentRequest, res: Response) => {
+router.get('/consent', async (req: ConsentRequest, res: Response) => {
   const { client_id, redirect_uri, scope, state } = req.query;
 
   // Get client info
@@ -75,7 +75,7 @@ router.get('/oauth/consent', async (req: ConsentRequest, res: Response) => {
 });
 
 // Handle consent decision
-router.post('/oauth/consent', async (req: Request, res: Response) => {
+router.post('/consent', async (req: Request, res: Response) => {
   const { 
     decision, 
     client_id, 
