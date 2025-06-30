@@ -1,0 +1,21 @@
+name: Notify Backend Changes
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'cloudbuild.yaml'
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Notify Deployment Needed
+      run: |
+        echo "🚨 Backend changes detected!"
+        echo "Cloud Build should automatically deploy these changes."
+        echo "If not configured, run: ./scripts/deploy-backend.sh"
+        echo ""
+        echo "Changed files:"
+        echo "${{ github.event.head_commit.modified }}"

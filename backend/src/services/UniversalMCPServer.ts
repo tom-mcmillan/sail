@@ -176,7 +176,7 @@ export class UniversalMCPServer {
     const tools = adapter.getTools();
     const prompts = adapter.getPrompts();
 
-    // Create MCP server
+    // Create MCP server with proper capabilities
     const server = new Server(
       {
         name: adapter.displayName,
@@ -185,9 +185,9 @@ export class UniversalMCPServer {
       },
       {
         capabilities: {
-          tools: {},
+          tools: tools.length > 0 ? {} : undefined,
           resources: {},
-          prompts: {}
+          prompts: prompts.length > 0 ? {} : undefined
         }
       }
     );
@@ -201,12 +201,15 @@ export class UniversalMCPServer {
   private setupServerHandlers(server: Server, adapter: KnowledgeStoreAdapter): void {
     // Initialize handler
     server.setRequestHandler(InitializeRequestSchema, async (request) => {
+      const tools = adapter.getTools();
+      const prompts = adapter.getPrompts();
+      
       return {
         protocolVersion: '1.0',
         capabilities: {
-          tools: {},
+          tools: tools.length > 0 ? {} : undefined,
           resources: {},
-          prompts: {}
+          prompts: prompts.length > 0 ? {} : undefined
         },
         serverInfo: {
           name: adapter.displayName,

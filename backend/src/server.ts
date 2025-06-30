@@ -13,6 +13,7 @@ import exchangeRoutes from './routes/exchanges';
 import mcpRoutes from './routes/mcp';
 import universalMcpRoutes from './routes/universalMcp';
 import oauthRoutes from './routes/oauth';
+import debugOauthRoutes from './routes/debug-oauth';
 
 // Load environment variables
 // In production, Docker Compose handles environment variables
@@ -66,8 +67,10 @@ class SailMCPServer {
     
     this.app.use(cors({
       origin: function(origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl)
-        if (!origin) return callback(null, true);
+        console.log('CORS check - origin:', origin, 'type:', typeof origin);
+        
+        // Allow requests with no origin (like mobile apps, curl, or form submissions)
+        if (!origin || origin === 'null') return callback(null, true);
         
         if (allowedOrigins.includes(origin)) {
           callback(null, true);
@@ -121,6 +124,9 @@ class SailMCPServer {
     // API routes
     this.app.use('/api/auth', authRoutes);
     this.app.use('/api/exchanges', exchangeRoutes);
+    
+    // Debug OAuth (temporary)
+    this.app.use('/debug', debugOauthRoutes);
     
     // MCP routes (public)
     this.app.use('/mcp', mcpRoutes);

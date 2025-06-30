@@ -61,16 +61,28 @@ router.get('/consent', async (req: ConsentRequest, res: Response) => {
           ${scopes.includes('mcp:read') ? '<li>Read your MCP exchanges</li>' : ''}
           ${scopes.includes('mcp:write') ? '<li>Modify your MCP exchanges</li>' : ''}
         </div>
-        <form method="POST" action="/oauth/consent">
+        <form method="POST" action="/oauth/consent" target="_top">
           <input type="hidden" name="client_id" value="${client_id}">
           <input type="hidden" name="redirect_uri" value="${redirect_uri}">
           <input type="hidden" name="scope" value="${scope}">
           <input type="hidden" name="state" value="${state || ''}">
           <input type="hidden" name="code_challenge" value="${req.query.code_challenge || ''}">
           <input type="hidden" name="code_challenge_method" value="${req.query.code_challenge_method || ''}">
-          <button type="submit" name="decision" value="approve" class="approve">Approve</button>
+          <button type="submit" name="decision" value="approve" class="approve" onclick="this.form.target='_top'">Approve</button>
           <button type="submit" name="decision" value="deny" class="deny">Deny</button>
         </form>
+        
+        <script>
+          // Ensure redirects work in the top window (in case this is in an iframe)
+          if (window.top !== window.self) {
+            document.addEventListener('DOMContentLoaded', function() {
+              const form = document.querySelector('form');
+              if (form) {
+                form.target = '_top';
+              }
+            });
+          }
+        </script>
       </div>
     </body>
     </html>
@@ -84,6 +96,9 @@ router.get('/consent', async (req: ConsentRequest, res: Response) => {
 // Handle consent decision
 router.post('/consent', async (req: Request, res: Response) => {
   try {
+    console.log('OAuth consent POST headers:', JSON.stringify(req.headers, null, 2));
+    console.log('OAuth consent POST body:', req.body);
+    
     const { 
       decision, 
       client_id, 
@@ -127,7 +142,66 @@ router.post('/consent', async (req: Request, res: Response) => {
   redirectUrl.searchParams.set('code', authCode);
   if (state) redirectUrl.searchParams.set('state', state);
   
-  res.redirect(redirectUrl.toString());
+  console.log('Generated redirect URL:', redirectUrl.toString());
+  
+  // Check if this is an AJAX request (Claude might be using fetch/XHR)
+  const isAjax = req.headers['x-requested-with'] === 'XMLHttpRequest' || 
+                 req.headers['accept']?.includes('application/json');
+  
+  console.log('Is AJAX request?', isAjax);
+  console.log('Accept header:', req.headers['accept']);
+  
+  if (isAjax) {
+    // Respond with JSON for AJAX requests
+    console.log('Sending JSON response');
+    res.json({
+      success: true,
+      redirect_uri: redirectUrl.toString(),
+      code: authCode,
+      state: state
+    });
+  } else {
+    // For form submissions, use JavaScript redirect instead of HTTP redirect
+    console.log('Sending JavaScript redirect to:', redirectUrl.toString());
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Redirecting...</title>
+      </head>
+      <body>
+        <p>Redirecting to Claude.ai...</p>
+        <p><strong>Manual Link:</strong> <a href="${redirectUrl.toString()}" target="_top" style="color: blue; text-decoration: underline; font-size: 18px;">Click here to complete authorization</a></p>
+        
+        <script>
+          console.log('Attempting redirect to: ${redirectUrl.toString()}');
+          console.log('Page loaded, executing redirect...');
+          
+          // Try immediate redirect first
+          try {
+            console.log('Window context:', window.top === window.self ? 'main window' : 'iframe');
+            
+            // Small delay to ensure page is loaded
+            setTimeout(function() {
+              console.log('Attempting redirect now...');
+              if (window.top !== window.self) {
+                console.log('Redirecting top window...');
+                window.top.location.href = "${redirectUrl.toString()}";
+              } else {
+                console.log('Redirecting current window...');
+                window.location.href = "${redirectUrl.toString()}";
+              }
+            }, 1000);
+            
+          } catch (e) {
+            console.error('Redirect failed:', e);
+            document.body.innerHTML += '<p style="color: red;">Automatic redirect failed: ' + e.message + '</p>';
+          }
+        </script>
+      </body>
+      </html>
+    `);
+  }
   } catch (error) {
     console.error('OAuth consent POST error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });

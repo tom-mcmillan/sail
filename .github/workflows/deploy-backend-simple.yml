@@ -1,0 +1,64 @@
+name: Deploy Backend to Cloud Run (Simple)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend-simple.yml'
+
+env:
+  PROJECT_ID: sail-mcp-production
+  SERVICE: sail-backend
+  REGION: us-central1
+  GCR_IMAGE: gcr.io/sail-mcp-production/sail-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Authenticate with GCP using service account key
+    - name: Setup GCP Service Account
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    # Setup gcloud CLI
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    # Configure Docker to authenticate with GCR
+    - name: Configure Docker
+      run: |
+        gcloud auth configure-docker
+
+    # Build and push Docker image
+    - name: Build and Push
+      run: |
+        cd backend
+        docker build --platform linux/amd64 -t "${{ env.GCR_IMAGE }}:${{ github.sha }}" -t "${{ env.GCR_IMAGE }}:latest" .
+        docker push "${{ env.GCR_IMAGE }}:${{ github.sha }}"
+        docker push "${{ env.GCR_IMAGE }}:latest"
+
+    # Deploy to Cloud Run
+    - name: Deploy
+      run: |
+        gcloud run deploy ${{ env.SERVICE }} \
+          --image=${{ env.GCR_IMAGE }}:${{ github.sha }} \
+          --region=${{ env.REGION }} \
+          --platform=managed \
+          --port=3001 \
+          --allow-unauthenticated \
+          --set-env-vars="NODE_ENV=production,BASE_URL=https://mcp.sailmcp.com,FRONTEND_URL=${{ secrets.FRONTEND_URL }}" \
+          --set-secrets="DATABASE_URL=database-credentials:latest,JWT_SECRET=app-secrets:latest" \
+          --service-account=sail-backend-sa@sail-mcp-production.iam.gserviceaccount.com
+
+    # Output the URL
+    - name: Show URL
+      run: |
+        echo "Deployed to:"
+        gcloud run services describe ${{ env.SERVICE }} --region=${{ env.REGION }} --format='value(status.url)'

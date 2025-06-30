@@ -1,0 +1,44 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '--platform'
+      - 'linux/amd64'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/sail-backend:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/sail-backend:latest'
+      - './backend'
+
+  # Push the Docker image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/sail-backend']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'sail-backend'
+      - '--image=gcr.io/$PROJECT_ID/sail-backend:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--port=3001'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=NODE_ENV=production,BASE_URL=https://mcp.sailmcp.com'
+      - '--set-secrets=DATABASE_URL=database-credentials:latest,JWT_SECRET=app-secrets:latest'
+      - '--service-account=sail-backend-sa@sail-mcp-production.iam.gserviceaccount.com'
+
+# Build timeout
+timeout: '1200s'
+
+# Only build when backend files change
+options:
+  logging: CLOUD_LOGGING_ONLY
+  
+# Specify which files trigger builds
+includedFiles:
+  - 'backend/**'
+  - 'cloudbuild.yaml'
