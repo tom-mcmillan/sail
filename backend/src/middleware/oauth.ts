@@ -14,7 +14,29 @@ export async function validateOAuthToken(req: AuthenticatedRequest, res: Respons
   try {
     const authorization = req.headers.authorization;
     
+    // Allow certain MCP discovery requests without authentication for Claude compatibility
     if (!authorization || !authorization.startsWith('Bearer ')) {
+      // Check if this is an initial discovery/capability request
+      const body = req.body;
+      const isDiscoveryRequest = body && body.method && (
+        body.method === 'initialize' ||
+        body.method === 'tools/list' ||
+        body.method === 'resources/list' ||
+        body.method === 'prompts/list'
+      );
+      
+      if (isDiscoveryRequest) {
+        console.log('Allowing unauthenticated discovery request:', body.method);
+        // Set minimal OAuth context for discovery
+        req.oauth = {
+          clientId: 'discovery',
+          scopes: ['mcp:read'],
+          userId: undefined
+        };
+        next();
+        return;
+      }
+      
       res.status(401).json({
         error: 'invalid_token',
         error_description: 'Bearer token required'
