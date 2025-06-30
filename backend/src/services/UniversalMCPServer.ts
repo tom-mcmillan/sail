@@ -86,8 +86,7 @@ export class UniversalMCPServer {
       // Create MCP server and transport for this session
       const server = this.createMCPServer(adapter);
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => newSessionId,
-        acceptContentTypes: ['application/json'] // More flexible content type handling
+        sessionIdGenerator: () => newSessionId
       });
       
       // Connect server to transport
@@ -131,6 +130,11 @@ export class UniversalMCPServer {
         });
         return;
       }
+    }
+
+    // Ensure Accept header includes required content types for compatibility
+    if (req.headers.accept && !req.headers.accept.includes('text/event-stream')) {
+      req.headers.accept = req.headers.accept + ', text/event-stream';
     }
 
     // Handle the request using session's transport
