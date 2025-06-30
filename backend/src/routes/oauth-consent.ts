@@ -19,17 +19,20 @@ interface ConsentRequest extends Request {
 
 // Show consent screen
 router.get('/consent', async (req: ConsentRequest, res: Response) => {
-  const { client_id, redirect_uri, scope, state } = req.query;
+  try {
+    const { client_id, redirect_uri, scope, state } = req.query;
 
-  // Get client info
-  const clientResult = await db.query(
-    'SELECT * FROM oauth_clients WHERE id = $1',
-    [client_id]
-  );
+    // Get client info
+    console.log('Looking up OAuth client:', client_id);
+    const clientResult = await db.query(
+      'SELECT * FROM oauth_clients WHERE id = $1',
+      [client_id]
+    );
+    console.log('OAuth client query result:', clientResult.rows.length, 'rows');
 
-  if (clientResult.rows.length === 0) {
-    return res.status(400).send('Invalid client');
-  }
+    if (clientResult.rows.length === 0) {
+      return res.status(400).send('Invalid client');
+    }
 
   const client = clientResult.rows[0];
   const scopes = scope?.split(' ') || ['mcp:read'];
@@ -72,19 +75,24 @@ router.get('/consent', async (req: ConsentRequest, res: Response) => {
     </body>
     </html>
   `);
+  } catch (error) {
+    console.error('OAuth consent error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
 });
 
 // Handle consent decision
 router.post('/consent', async (req: Request, res: Response) => {
-  const { 
-    decision, 
-    client_id, 
-    redirect_uri, 
-    scope, 
-    state,
-    code_challenge,
-    code_challenge_method 
-  } = req.body;
+  try {
+    const { 
+      decision, 
+      client_id, 
+      redirect_uri, 
+      scope, 
+      state,
+      code_challenge,
+      code_challenge_method 
+    } = req.body;
 
   if (decision !== 'approve') {
     const redirectUrl = new URL(redirect_uri);
@@ -120,6 +128,10 @@ router.post('/consent', async (req: Request, res: Response) => {
   if (state) redirectUrl.searchParams.set('state', state);
   
   res.redirect(redirectUrl.toString());
+  } catch (error) {
+    console.error('OAuth consent POST error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
 });
 
 export default router;
