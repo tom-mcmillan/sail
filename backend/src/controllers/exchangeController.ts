@@ -82,7 +82,7 @@ export class ExchangeController {
         success: true,
         data: {
           ...exchange,
-          url: `${process.env.BASE_URL}/${slug}`
+          url: `${process.env.BASE_URL}/${slug}/mcp`
         }
       });
     } catch (error) {
@@ -133,7 +133,7 @@ export class ExchangeController {
 
       const exchanges = result.rows.map(exchange => ({
         ...exchange,
-        url: `${process.env.BASE_URL}/${exchange.slug}`
+        url: `${process.env.BASE_URL}/${exchange.slug}/mcp`
       }));
 
       res.json({
@@ -172,7 +172,7 @@ export class ExchangeController {
         success: true,
         data: {
           ...exchange,
-          url: `${process.env.BASE_URL}/mcp/${exchange.slug}`
+          url: `${process.env.BASE_URL}/${exchange.slug}/mcp`
         }
       });
     } catch (error) {
@@ -319,7 +319,7 @@ export class ExchangeController {
         owner: exchange.owner_name,
         queries_count: exchange.queries_count,
         created_at: exchange.created_at,
-        url: `${process.env.BASE_URL}/mcp/${exchange.slug}`
+        url: `${process.env.BASE_URL}/${exchange.slug}/mcp`
       }));
 
       res.json({
@@ -380,7 +380,7 @@ export class ExchangeController {
           ...metadata,
           container_id: containerId,
           port: port,
-          mcp_url: `${process.env.BASE_URL}/mcp/${exchange.slug}`
+          mcp_url: `${process.env.BASE_URL}/${exchange.slug}/mcp`
         };
 
         await db.query(

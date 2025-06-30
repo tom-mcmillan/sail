@@ -45,7 +45,7 @@ services:
       PORT: 3001
       NODE_ENV: production
       BASE_URL: https://sailmcp.com
-      FRONTEND_URL: https://sailmcp.com
+      FRONTEND_URL: https://www.sailmcp.com
       MCP_SERVER_IMAGE: sail-mcp-server
       MCP_SERVER_BASE_PORT: 4000
     volumes:
@@ -61,22 +61,22 @@ services:
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
-      # OAuth routes with highest priority
-      - "traefik.http.routers.backend-oauth.rule=Host(`sailmcp.com`) && (PathPrefix(`/.well-known`) || PathPrefix(`/oauth`))"
+      # OAuth routes with highest priority (with www support)
+      - "traefik.http.routers.backend-oauth.rule=Host(`sailmcp.com`, `www.sailmcp.com`) && (PathPrefix(`/.well-known`) || PathPrefix(`/oauth`))"
       - "traefik.http.routers.backend-oauth.tls=true"
       - "traefik.http.routers.backend-oauth.tls.certresolver=letsencrypt"
       - "traefik.http.routers.backend-oauth.priority=200"
       - "traefik.http.routers.backend-oauth.service=backend"
-      - "traefik.http.routers.backend-oauth-http.rule=Host(`sailmcp.com`) && (PathPrefix(`/.well-known`) || PathPrefix(`/oauth`))"
+      - "traefik.http.routers.backend-oauth-http.rule=Host(`sailmcp.com`, `www.sailmcp.com`) && (PathPrefix(`/.well-known`) || PathPrefix(`/oauth`))"
       - "traefik.http.routers.backend-oauth-http.entrypoints=web"
       - "traefik.http.routers.backend-oauth-http.priority=200"
       - "traefik.http.routers.backend-oauth-http.service=backend"
-      # API and MCP routes
-      - "traefik.http.routers.backend.rule=Host(`sailmcp.com`) && (PathPrefix(`/api`) || PathPrefix(`/mcp`) || PathPrefix(`/health`) || PathPrefix(`/files`))"
+      # API and MCP routes (with www support)
+      - "traefik.http.routers.backend.rule=Host(`sailmcp.com`, `www.sailmcp.com`) && (PathPrefix(`/api`) || PathPrefix(`/mcp`) || PathPrefix(`/health`) || PathPrefix(`/files`))"
       - "traefik.http.routers.backend.tls=true"
       - "traefik.http.routers.backend.tls.certresolver=letsencrypt"
       - "traefik.http.routers.backend.priority=100"
-      - "traefik.http.routers.backend-http.rule=Host(`sailmcp.com`) && (PathPrefix(`/api`) || PathPrefix(`/mcp`) || PathPrefix(`/health`) || PathPrefix(`/files`))"
+      - "traefik.http.routers.backend-http.rule=Host(`sailmcp.com`, `www.sailmcp.com`) && (PathPrefix(`/api`) || PathPrefix(`/mcp`) || PathPrefix(`/health`) || PathPrefix(`/files`))"
       - "traefik.http.routers.backend-http.entrypoints=web"
       - "traefik.http.routers.backend-http.priority=100"
       - "traefik.http.services.backend.loadbalancer.server.port=3001"
@@ -86,13 +86,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: https://sailmcp.com/api
-        NEXT_PUBLIC_BASE_URL: https://sailmcp.com
+        NEXT_PUBLIC_API_URL: https://www.sailmcp.com/api
+        NEXT_PUBLIC_BASE_URL: https://www.sailmcp.com
         NODE_ENV: production
     container_name: sail-frontend-prod
     environment:
-      NEXT_PUBLIC_API_URL: https://sailmcp.com/api
-      NEXT_PUBLIC_BASE_URL: https://sailmcp.com
+      NEXT_PUBLIC_API_URL: https://www.sailmcp.com/api
+      NEXT_PUBLIC_BASE_URL: https://www.sailmcp.com
       NODE_ENV: production
     depends_on:
       - backend
@@ -101,11 +101,11 @@ services:
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(`sailmcp.com`)"
+      - "traefik.http.routers.frontend.rule=Host(`sailmcp.com`, `www.sailmcp.com`)"
       - "traefik.http.routers.frontend.tls=true"
       - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
       - "traefik.http.routers.frontend.priority=50"
-      - "traefik.http.routers.frontend-http.rule=Host(`sailmcp.com`)"
+      - "traefik.http.routers.frontend-http.rule=Host(`sailmcp.com`, `www.sailmcp.com`)"
       - "traefik.http.routers.frontend-http.entrypoints=web"
       - "traefik.http.routers.frontend-http.priority=50"
       - "traefik.http.services.frontend.loadbalancer.server.port=3000"
