@@ -60,6 +60,21 @@ export class OAuthAuthorizationServer {
   }
 
   /**
+   * OAuth Protected Resource Metadata (for MCP compliance)
+   */
+  async getProtectedResourceMetadata(req: Request, res: Response): Promise<void> {
+    const metadata = {
+      resource: this.baseUrl,
+      authorization_servers: [this.baseUrl],
+      scopes_supported: ['mcp:read', 'mcp:write'],
+      bearer_methods_supported: ['header'],
+      resource_documentation: `${this.baseUrl}/docs`
+    };
+
+    res.json(metadata);
+  }
+
+  /**
    * Dynamic Client Registration (RFC 7591)
    */
   async registerClient(req: Request, res: Response): Promise<void> {
