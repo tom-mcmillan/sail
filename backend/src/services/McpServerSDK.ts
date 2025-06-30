@@ -70,7 +70,7 @@ export class McpServerSDK {
 
     // Handle session management
     if (message.method === 'initialize') {
-      // Create new session for initialize
+      // For initialize, create new session (even if we have a sessionId from previous attempts)
       session = await this.createSession(adapter);
       res.setHeader('Mcp-Session-Id', session.id);
     } else {

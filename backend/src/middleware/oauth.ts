@@ -19,12 +19,16 @@ export async function validateOAuthToken(req: AuthenticatedRequest, res: Respons
       // Check if this is an initial discovery/capability request (but not from Claude which needs OAuth)
       const body = req.body;
       const isClaudeRequest = req.headers['user-agent']?.toLowerCase().includes('claude');
-      const isDiscoveryRequest = body && body.method && (
-        body.method === 'initialize' ||
+      
+      // Always allow initialize method even for Claude (needed for session establishment)
+      const isInitializeRequest = body && body.method === 'initialize';
+      const isOtherDiscoveryRequest = body && body.method && (
         body.method === 'tools/list' ||
         body.method === 'resources/list' ||
         body.method === 'prompts/list'
       ) && !isClaudeRequest;
+      
+      const isDiscoveryRequest = isInitializeRequest || isOtherDiscoveryRequest;
       
       // Also allow GET requests to MCP endpoints for initial discovery (but not for Claude OAuth trigger)
       const isMCPGetRequest = req.method === 'GET' && req.path.includes('/mcp') && !req.headers['user-agent']?.includes('claude');
