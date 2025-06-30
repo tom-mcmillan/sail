@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../services/database';
 import { AdapterRegistry } from '../adapters/AdapterRegistry';
-import { UniversalMCPServer } from '../services/UniversalMCPServer';
+import { McpServerSDK } from '../services/McpServerSDK';
 
 interface AuthenticatedRequest extends Request {
   oauth?: {
@@ -12,10 +12,10 @@ interface AuthenticatedRequest extends Request {
 }
 
 class UniversalMCPControllerClass {
-  private mcpServer: UniversalMCPServer;
+  private mcpServer: McpServerSDK;
 
   constructor() {
-    this.mcpServer = new UniversalMCPServer();
+    this.mcpServer = new McpServerSDK();
   }
 
   /**

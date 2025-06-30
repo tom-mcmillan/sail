@@ -25,8 +25,11 @@ export async function validateOAuthToken(req: AuthenticatedRequest, res: Respons
         body.method === 'prompts/list'
       );
       
-      if (isDiscoveryRequest) {
-        console.log('Allowing unauthenticated discovery request:', body.method);
+      // Also allow GET requests to MCP endpoints for initial discovery
+      const isMCPGetRequest = req.method === 'GET' && req.path.includes('/mcp');
+      
+      if (isDiscoveryRequest || isMCPGetRequest) {
+        console.log('Allowing unauthenticated discovery request:', body?.method || req.method);
         // Set minimal OAuth context for discovery
         req.oauth = {
           clientId: 'discovery',
