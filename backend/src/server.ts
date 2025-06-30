@@ -53,9 +53,14 @@ class SailMCPServer {
     }));
 
     // CORS configuration
-    const allowedOrigins = process.env.NODE_ENV === 'production' 
+    const baseOrigins = process.env.NODE_ENV === 'production' 
       ? ['https://sailmcp.com', 'https://www.sailmcp.com']
       : ['http://localhost:3000', 'http://localhost:3001'];
+    
+    // Add FRONTEND_URL if specified
+    const allowedOrigins = process.env.FRONTEND_URL 
+      ? [...baseOrigins, process.env.FRONTEND_URL]
+      : baseOrigins;
     
     console.log('CORS allowed origins:', allowedOrigins);
     
