@@ -95,14 +95,20 @@ export class McpServerSDK {
   }
 
   private async handleGet(req: Request, res: Response, adapter: KnowledgeStoreAdapter, sessionId?: string): Promise<void> {
-    // If no session ID, return basic server info for discovery
+    // If no session ID, return server info with OAuth endpoints for discovery
     if (!sessionId) {
       res.json({
         name: adapter.displayName,
         description: adapter.description,
         version: '1.0.0',
         protocol: 'mcp',
-        capabilities: ['tools', 'resources', 'prompts']
+        capabilities: ['tools', 'resources', 'prompts'],
+        oauth: {
+          authorization_endpoint: `${process.env.BASE_URL}/oauth/authorize`,
+          token_endpoint: `${process.env.BASE_URL}/oauth/token`,
+          registration_endpoint: `${process.env.BASE_URL}/oauth/register`,
+          scopes_supported: ['mcp:read']
+        }
       });
       return;
     }
