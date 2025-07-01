@@ -102,7 +102,17 @@ export class McpServerSDK {
         description: adapter.description,
         version: '1.0.0',
         protocol: 'mcp',
-        capabilities: ['tools', 'resources', 'prompts'],
+        capabilities: {
+          tools: {
+            listChanged: true
+          },
+          resources: {
+            listChanged: true
+          },
+          prompts: {
+            listChanged: true
+          }
+        },
         oauth: {
           authorization_endpoint: `${process.env.BASE_URL}/oauth/authorize`,
           token_endpoint: `${process.env.BASE_URL}/oauth/token`,
