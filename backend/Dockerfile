@@ -1,34 +1,28 @@
-FROM node:18-alpine
+FROM node:18
 
 WORKDIR /app
-
-# Install required dependencies
-RUN apk add --no-cache python3 make g++
 
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies
-RUN npm ci
+# Install dependencies including dev dependencies for TypeScript
+RUN npm install
 
 # Copy source code
 COPY . .
 
-# Build the application with verbose output
-RUN npm run build || (echo "Build failed, listing installed packages:" && npm list typescript && exit 1)
-
-# Remove dev dependencies and clean cache
-RUN npm ci --only=production && npm cache clean --force
+# Build TypeScript
+RUN npx tsc
 
 # Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
+RUN groupadd -r nodejs && useradd -r -g nodejs nodejs
 
 # Create storage directory
 RUN mkdir -p /app/storage && chown -R nodejs:nodejs /app
 
+# Switch to non-root user
 USER nodejs
 
-EXPOSE 8080
+EXPOSE 3000
 
-CMD ["npm", "start"]
+CMD ["node", "dist/server.js"]
