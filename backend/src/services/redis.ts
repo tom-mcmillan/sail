@@ -57,6 +57,25 @@ class RedisService {
     if (!this.client) return;
     await this.client.disconnect();
   }
+
+  isConnected(): boolean {
+    return this.client?.status === 'ready';
+  }
+
+  async setex(key: string, seconds: number, value: string): Promise<void> {
+    if (!this.client) return;
+    await this.client.setex(key, seconds, value);
+  }
+
+  async exists(key: string): Promise<number> {
+    if (!this.client) return 0;
+    return this.client.exists(key);
+  }
+
+  async keys(pattern: string): Promise<string[]> {
+    if (!this.client) return [];
+    return this.client.keys(pattern);
+  }
 }
 
 export const redis = new RedisService();

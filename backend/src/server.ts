@@ -10,7 +10,6 @@ import { redis } from './services/redis';
 // Import routes
 import authRoutes from './routes/auth';
 import exchangeRoutes from './routes/exchanges';
-import mcpRoutes from './routes/mcp';
 import universalMcpRoutes from './routes/universalMcp';
 import oauthRoutes from './routes/oauth';
 import debugOauthRoutes from './routes/debug-oauth';
@@ -128,10 +127,7 @@ class SailMCPServer {
     // Debug OAuth (temporary)
     this.app.use('/debug', debugOauthRoutes);
     
-    // MCP routes (public)
-    this.app.use('/mcp', mcpRoutes);
-    
-    // Universal MCP endpoint - works with all clients
+    // Universal MCP endpoint - works with all clients (includes legacy routes)
     this.app.use('/', universalMcpRoutes);
 
     // File serving for local storage

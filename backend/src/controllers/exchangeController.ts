@@ -4,6 +4,7 @@ import Docker from 'dockerode';
 import { db } from '../services/database';
 import { redis } from '../services/redis';
 import { fileSystemService } from '../services/fileSystem';
+import { DockerSecurityService } from '../services/dockerSecurity';
 import { Exchange, CreateExchangeRequest } from '../types';
 
 interface AuthenticatedRequest extends Request {
@@ -19,25 +20,16 @@ export class ExchangeController {
   async createExchange(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { name, description, type, privacy = 'private', config = {} } = req.body as CreateExchangeRequest;
-      // Temporary: Use a test user ID when auth is disabled  
-      const testUserId = '00000000-0000-0000-0000-000000000001';
-      const userId = req.user?.id || testUserId;
-
-      // Ensure test user exists
-      if (!req.user) {
-        try {
-          const existingUser = await db.query('SELECT id FROM users WHERE id = $1', [testUserId]);
-          if (existingUser.rows.length === 0) {
-            await db.query(
-              'INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, $3, $4)',
-              [testUserId, 'test@sailmcp.com', 'Test User', 'test-hash']
-            );
-            console.log('✅ Test user created');
-          }
-        } catch (userError) {
-          console.error('Error creating test user:', userError);
-        }
+      
+      if (!req.user?.id) {
+        res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+        return;
       }
+      
+      const userId = req.user.id;
 
       if (!name || !description || !type) {
         res.status(400).json({
@@ -96,7 +88,15 @@ export class ExchangeController {
 
   async getExchanges(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const userId = req.user?.id || '00000000-0000-0000-0000-000000000001';
+      if (!req.user?.id) {
+        res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+        return;
+      }
+      
+      const userId = req.user.id;
       const { page = 1, limit = 20, type, status } = req.query;
 
       let query = 'SELECT * FROM exchanges WHERE user_id = $1';
@@ -152,7 +152,16 @@ export class ExchangeController {
   async getExchange(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const userId = req.user!.id;
+      
+      if (!req.user?.id) {
+        res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+        return;
+      }
+      
+      const userId = req.user.id;
 
       const result = await db.query(
         'SELECT * FROM exchanges WHERE id = $1 AND user_id = $2',
@@ -188,7 +197,16 @@ export class ExchangeController {
     try {
       const { id } = req.params;
       const { name, description, privacy, config } = req.body;
-      const userId = req.user!.id;
+      
+      if (!req.user?.id) {
+        res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+        return;
+      }
+      
+      const userId = req.user.id;
 
       const result = await db.query(
         `UPDATE exchanges 
@@ -226,7 +244,16 @@ export class ExchangeController {
   async deleteExchange(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const userId = req.user!.id;
+      
+      if (!req.user?.id) {
+        res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+        return;
+      }
+      
+      const userId = req.user.id;
 
       // Get exchange details first
       const exchangeResult = await db.query(
@@ -463,21 +490,6 @@ export class ExchangeController {
     return typeMap[ext || ''] || 'unknown';
   }
 
-  private async ensureTestUser(): Promise<void> {
-    try {
-      const existingUser = await db.query('SELECT id FROM users WHERE id = $1', ['test-user-id']);
-      
-      if (existingUser.rows.length === 0) {
-        await db.query(
-          'INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, $3, $4)',
-          ['test-user-id', 'test@sailmcp.com', 'Test User', 'test-hash']
-        );
-        console.log('✅ Test user created');
-      }
-    } catch (error) {
-      console.error('Error ensuring test user:', error);
-    }
-  }
 
   private async getAvailablePort(): Promise<number> {
     const basePort = parseInt(process.env.MCP_SERVER_BASE_PORT || '4000');
@@ -513,32 +525,35 @@ export class ExchangeController {
     try {
       const imageName = process.env.MCP_SERVER_IMAGE || 'sail-mcp-server';
       
-      // Create container
-      const container = await this.docker.createContainer({
-        Image: imageName,
-        Cmd: [exchange.slug],
-        Env: [
-          `EXCHANGE_SLUG=${exchange.slug}`,
-          `API_URL=${process.env.BASE_URL || 'http://localhost:3001'}`,
-          `PORT=${port}`
-        ],
-        ExposedPorts: {
-          [`${port}/tcp`]: {}
-        },
-        HostConfig: {
-          PortBindings: {
-            [`${port}/tcp`]: [{ HostPort: port.toString() }]
-          },
-          RestartPolicy: {
-            Name: 'unless-stopped'
-          }
-        },
-        Labels: {
-          'sail.exchange.id': exchange.id,
-          'sail.exchange.slug': exchange.slug,
-          'sail.service': 'mcp-server'
-        }
-      });
+      // Prepare container environment and binds
+      const containerEnv = [
+        `EXCHANGE_SLUG=${exchange.slug}`,
+        `API_URL=${process.env.BASE_URL || 'http://localhost:3001'}`,
+        `PORT=${port}`
+      ];
+
+      const containerLabels = {
+        'sail.exchange.id': exchange.id,
+        'sail.exchange.slug': exchange.slug,
+        'sail.service': 'mcp-server',
+        'sail.version': '1.0.0'
+      };
+
+      const containerBinds = process.env.NODE_ENV === 'development' ? [
+        `${process.cwd()}/storage:/app/storage:ro` // Read-only access to storage in development
+      ] : [];
+
+      // Create container with security policies and resource limits
+      const containerConfig = DockerSecurityService.createSecureContainerConfig(
+        imageName,
+        [exchange.slug],
+        containerEnv,
+        port,
+        containerLabels,
+        containerBinds
+      );
+
+      const container = await this.docker.createContainer(containerConfig);
 
       // Start container
       await container.start();

@@ -209,6 +209,82 @@ class UniversalMCPControllerClass {
       // Don't fail the request if analytics fails
     }
   }
+
+  /**
+   * Get analytics for an exchange
+   */
+  async getAnalytics(req: Request, res: Response): Promise<void> {
+    try {
+      const { exchangeId } = req.params;
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+        return;
+      }
+
+      // Verify ownership
+      const exchangeResult = await db.query(
+        'SELECT id FROM exchanges WHERE id = $1 AND user_id = $2',
+        [exchangeId, userId]
+      );
+
+      if (exchangeResult.rows.length === 0) {
+        res.status(404).json({
+          success: false,
+          error: 'Exchange not found'
+        });
+        return;
+      }
+
+      // Get analytics data
+      const [queriesOverTime, topQueries, userAgents] = await Promise.all([
+        db.query(`
+          SELECT DATE_TRUNC('day', created_at) as date, COUNT(*) as queries
+          FROM analytics 
+          WHERE exchange_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
+          GROUP BY DATE_TRUNC('day', created_at)
+          ORDER BY date
+        `, [exchangeId]),
+        
+        db.query(`
+          SELECT query, COUNT(*) as count
+          FROM analytics 
+          WHERE exchange_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY query
+          ORDER BY count DESC
+          LIMIT 10
+        `, [exchangeId]),
+        
+        db.query(`
+          SELECT user_agent, COUNT(*) as count
+          FROM analytics 
+          WHERE exchange_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY user_agent
+          ORDER BY count DESC
+          LIMIT 5
+        `, [exchangeId])
+      ]);
+
+      res.json({
+        success: true,
+        data: {
+          queriesOverTime: queriesOverTime.rows,
+          topQueries: topQueries.rows,
+          userAgents: userAgents.rows
+        }
+      });
+    } catch (error) {
+      console.error('Analytics error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to retrieve analytics'
+      });
+    }
+  }
 }
 
 export const universalMcpController = new UniversalMCPControllerClass();

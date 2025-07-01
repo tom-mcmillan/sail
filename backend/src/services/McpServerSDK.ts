@@ -1,20 +1,21 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { KnowledgeStoreAdapter } from '../adapters/base/KnowledgeStoreAdapter';
+import { sessionStore, SessionData } from './sessionStore';
 import { Request, Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 
-interface Session {
+interface ActiveSession {
   id: string;
   server: McpServer;
   transport: StreamableHTTPServerTransport;
   adapter: KnowledgeStoreAdapter;
-  createdAt: Date;
-  lastActivity: Date;
+  sessionData: SessionData;
 }
 
 export class McpServerSDK {
-  private sessions: Map<string, Session> = new Map();
+  private activeSessions: Map<string, ActiveSession> = new Map();
   private sessionTimeout = 30 * 60 * 1000; // 30 minutes
 
   constructor() {
@@ -66,7 +67,7 @@ export class McpServerSDK {
 
   private async handlePost(req: Request, res: Response, adapter: KnowledgeStoreAdapter, sessionId?: string): Promise<void> {
     const message = req.body;
-    let session: Session;
+    let session: ActiveSession;
 
     // Handle session management
     if (message.method === 'initialize') {
@@ -75,19 +76,41 @@ export class McpServerSDK {
       res.setHeader('Mcp-Session-Id', session.id);
     } else {
       // Use existing session
-      if (!sessionId || !this.sessions.has(sessionId)) {
+      if (!sessionId) {
         res.status(400).json({
           jsonrpc: '2.0',
           error: {
             code: -32600,
-            message: 'Invalid or missing session ID'
+            message: 'Missing session ID'
           },
           id: message.id || null
         });
         return;
       }
-      session = this.sessions.get(sessionId)!;
-      session.lastActivity = new Date();
+
+      // Try to get session from persistent store first
+      const sessionData = await sessionStore.get(sessionId);
+      if (!sessionData) {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32600,
+            message: 'Invalid or expired session ID'
+          },
+          id: message.id || null
+        });
+        return;
+      }
+
+      // Check if we have active session, otherwise restore it
+      session = this.activeSessions.get(sessionId);
+      if (!session) {
+        session = await this.restoreSession(sessionId, sessionData, adapter);
+      }
+
+      // Update activity
+      await sessionStore.updateActivity(sessionId);
+      session.sessionData.lastActivity = new Date();
     }
 
     // Handle the request using session's transport

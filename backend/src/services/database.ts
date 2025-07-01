@@ -1,10 +1,13 @@
 import { Client, Pool } from 'pg';
 import { config } from 'dotenv';
+import { MigrationService } from './migrations';
+import { join } from 'path';
 
 config();
 
 class DatabaseService {
   private pool: Pool;
+  private migrationService: MigrationService;
 
   constructor() {
     this.pool = new Pool({
@@ -17,6 +20,12 @@ class DatabaseService {
     this.pool.on('error', (err) => {
       console.error('Unexpected error on idle client', err);
     });
+
+    // Initialize migration service
+    this.migrationService = new MigrationService(
+      this.pool,
+      join(process.cwd(), 'migrations')
+    );
   }
 
   async query(text: string, params?: any[]) {
@@ -197,23 +206,27 @@ class DatabaseService {
 
   async migrate() {
     try {
-      // Add knowledge_type column if it doesn't exist
-      await this.query(`
-        ALTER TABLE exchanges 
-        ADD COLUMN IF NOT EXISTS knowledge_type VARCHAR(50) DEFAULT 'local' 
-        CHECK (knowledge_type IN ('local', 'github', 'google-drive', 'zotero'));
-      `);
-      
-      // Add index for knowledge_type if it doesn't exist
-      await this.query(`
-        CREATE INDEX IF NOT EXISTS idx_exchanges_knowledge_type ON exchanges(knowledge_type);
-      `);
-      
+      console.log('🔄 Running database migrations...');
+      await this.migrationService.migrate();
       console.log('✅ Database migration completed');
     } catch (error) {
       console.error('❌ Error running migration:', error);
       throw error;
     }
+  }
+
+  /**
+   * Get migration status
+   */
+  async getMigrationStatus() {
+    return await this.migrationService.getStatus();
+  }
+
+  /**
+   * Rollback to specific version
+   */
+  async rollbackTo(version: number) {
+    return await this.migrationService.rollbackTo(version);
   }
 
   async close() {
