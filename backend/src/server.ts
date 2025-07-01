@@ -13,6 +13,7 @@ import exchangeRoutes from './routes/exchanges';
 import universalMcpRoutes from './routes/universalMcp';
 import oauthRoutes from './routes/oauth';
 import debugOauthRoutes from './routes/debug-oauth';
+import adminRoutes from './routes/admin';
 
 // Load environment variables
 // In production, Docker Compose handles environment variables
@@ -123,6 +124,7 @@ class SailMCPServer {
     // API routes
     this.app.use('/api/auth', authRoutes);
     this.app.use('/api/exchanges', exchangeRoutes);
+    this.app.use('/api/admin', adminRoutes);
     
     // Debug OAuth (temporary)
     this.app.use('/debug', debugOauthRoutes);
