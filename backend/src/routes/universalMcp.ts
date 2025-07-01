@@ -17,13 +17,27 @@ const optionalOAuth = (req: any, res: any, next: any) => {
   }
 };
 
-// Packet key based MCP endpoint - no authentication required, just the key
-router.all('/pk/:packetKey', mcpRateLimit, universalMcpController.handlePacketKeyMCPRequest.bind(universalMcpController));
-
-// Universal MCP endpoint - works with any MCP client
-// Supports both POST (Streamable HTTP) and GET (SSE) for maximum compatibility
-// Uses optional OAuth for backward compatibility
-router.all('/:slug/mcp', mcpRateLimit, optionalOAuth, universalMcpController.handleUniversalMCPRequest.bind(universalMcpController));
+// Smart routing: Check if this is a packet access vs legacy slug
+router.all('/:identifier/mcp', mcpRateLimit, (req: any, res: any, next: any) => {
+  const { identifier } = req.params;
+  
+  // Check if this looks like a packet ID (contains packet- prefix or has access key in request)
+  const hasAccessKey = req.headers.authorization?.startsWith('Bearer ') || 
+                      req.query.key || 
+                      req.body?.accessKey;
+  
+  if (identifier.startsWith('packet-') || hasAccessKey) {
+    // Route to packet handler
+    req.params.packetId = identifier;
+    universalMcpController.handlePacketMCPRequest(req, res);
+  } else {
+    // Route to legacy slug handler
+    req.params.slug = identifier;
+    optionalOAuth(req, res, () => {
+      universalMcpController.handleUniversalMCPRequest(req, res);
+    });
+  }
+});
 
 // Legacy MCP endpoint routes for backward compatibility
 router.all('/mcp/:slug', mcpRateLimit, optionalOAuth, universalMcpController.handleUniversalMCPRequest.bind(universalMcpController));

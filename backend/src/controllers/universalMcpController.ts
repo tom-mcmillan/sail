@@ -20,22 +20,53 @@ class UniversalMCPControllerClass {
   }
 
   /**
-   * Handle packet key based MCP requests - no authentication required
+   * Handle packet-based MCP requests with access key authorization
    */
-  async handlePacketKeyMCPRequest(req: AuthenticatedRequest, res: Response): Promise<void> {
+  async handlePacketMCPRequest(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      console.log(`Packet Key MCP Request: ${req.method} ${req.url}`);
-      const { packetKey } = req.params;
+      console.log(`Packet MCP Request: ${req.method} ${req.url}`);
+      const { packetId } = req.params;
       
-      // Validate packet key and get exchange info
-      const packetData = await packetKeyController.validatePacketKey(packetKey);
+      // Extract access key from Authorization header or query parameter
+      let accessKey = null;
+      
+      // Try Authorization header first
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        accessKey = authHeader.substring(7);
+      }
+      
+      // Try query parameter as fallback
+      if (!accessKey && req.query.key) {
+        accessKey = req.query.key as string;
+      }
+      
+      // Try body parameter for POST requests
+      if (!accessKey && req.body && req.body.accessKey) {
+        accessKey = req.body.accessKey;
+      }
+      
+      if (!accessKey) {
+        res.status(401).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32001,
+            message: 'Access key required. Provide via Authorization header (Bearer <key>), ?key=<key> parameter, or request body.'
+          },
+          id: null
+        });
+        return;
+      }
+      
+      // Validate packet access
+      const packetData = await packetKeyController.validatePacketAccess(packetId, accessKey);
       
       if (!packetData) {
-        res.status(404).json({
+        res.status(403).json({
           jsonrpc: '2.0',
           error: {
             code: -32002,
-            message: 'Invalid, expired, or deactivated packet key'
+            message: 'Invalid access key, expired packet, or access denied'
           },
           id: null
         });
@@ -50,7 +81,7 @@ class UniversalMCPControllerClass {
       };
       
       await packetKeyController.logUsage(
-        packetKey,
+        accessKey,
         clientInfo,
         req.body?.method || req.method,
         req.url

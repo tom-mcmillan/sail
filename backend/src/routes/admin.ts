@@ -4,6 +4,109 @@ import { db } from '../services/database';
 const router = Router();
 
 // Migration endpoint for adding packet key support
+// Migration endpoint for refactoring packet keys (separate ID and access key)
+router.post('/migrate/refactor-packet-keys', async (req, res) => {
+  try {
+    console.log('🔄 Running migration: Refactor packet keys...');
+    
+    // Add new columns
+    await db.query(`
+      ALTER TABLE packet_keys 
+      ADD COLUMN IF NOT EXISTS packet_id VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS access_key VARCHAR(30)
+    `);
+    
+    // Update existing packet_keys to have proper packet_id and access_key
+    await db.query(`
+      UPDATE packet_keys 
+      SET 
+        packet_id = CASE 
+          WHEN name IS NOT NULL THEN 
+            lower(regexp_replace(regexp_replace(name, '[^a-zA-Z0-9\\s-]', '', 'g'), '\\s+', '-', 'g')) || '-' || substring(md5(random()::text), 1, 8)
+          ELSE 
+            'packet-' || substring(md5(random()::text), 1, 12)
+        END,
+        access_key = 'sail-pk-' || lower(substring(md5(random()::text), 1, 12))
+      WHERE packet_id IS NULL OR access_key IS NULL
+    `);
+    
+    // Make columns NOT NULL
+    await db.query(`
+      ALTER TABLE packet_keys 
+      ALTER COLUMN packet_id SET NOT NULL,
+      ALTER COLUMN access_key SET NOT NULL
+    `);
+    
+    // Add unique constraints
+    await db.query(`
+      ALTER TABLE packet_keys 
+      ADD CONSTRAINT IF NOT EXISTS unique_packet_id UNIQUE (packet_id),
+      ADD CONSTRAINT IF NOT EXISTS unique_access_key UNIQUE (access_key)
+    `);
+    
+    // Add access_key column to usage table
+    await db.query(`
+      ALTER TABLE packet_key_usage 
+      ADD COLUMN IF NOT EXISTS access_key VARCHAR(30)
+    `);
+    
+    // Update function
+    await db.query(`
+      CREATE OR REPLACE FUNCTION generate_packet_identifiers(packet_name TEXT DEFAULT NULL) 
+      RETURNS TABLE(packet_id VARCHAR, access_key VARCHAR) AS $$
+      DECLARE
+        new_packet_id VARCHAR;
+        new_access_key VARCHAR;
+        id_exists BOOLEAN;
+        key_exists BOOLEAN;
+      BEGIN
+        -- Generate packet_id
+        LOOP
+          IF packet_name IS NOT NULL THEN
+            new_packet_id := lower(regexp_replace(regexp_replace(packet_name, '[^a-zA-Z0-9\\s-]', '', 'g'), '\\s+', '-', 'g')) || '-' || lower(substring(md5(random()::text), 1, 8));
+          ELSE
+            new_packet_id := 'packet-' || lower(substring(md5(random()::text), 1, 12));
+          END IF;
+          
+          SELECT EXISTS(SELECT 1 FROM packet_keys WHERE packet_keys.packet_id = new_packet_id) INTO id_exists;
+          EXIT WHEN NOT id_exists;
+        END LOOP;
+        
+        -- Generate access_key
+        LOOP
+          new_access_key := 'sail-pk-' || lower(substring(md5(random()::text), 1, 12));
+          SELECT EXISTS(SELECT 1 FROM packet_keys WHERE packet_keys.access_key = new_access_key) INTO key_exists;
+          EXIT WHEN NOT key_exists;
+        END LOOP;
+        
+        RETURN QUERY SELECT new_packet_id, new_access_key;
+      END;
+      $$ LANGUAGE plpgsql;
+    `);
+    
+    console.log('✅ Packet key refactor completed!');
+    
+    res.json({
+      success: true,
+      message: 'Packet key refactor completed successfully',
+      changes: [
+        'Added packet_id and access_key columns',
+        'Updated existing records with new identifiers',
+        'Added unique constraints',
+        'Updated packet_key_usage table',
+        'Created generate_packet_identifiers() function'
+      ]
+    });
+    
+  } catch (error: any) {
+    console.error('❌ Packet key refactor failed:', error.message);
+    res.status(500).json({
+      success: false,
+      error: `Packet key refactor failed: ${error.message}`
+    });
+  }
+});
+
 router.post('/migrate/add-packet-keys', async (req, res) => {
   try {
     console.log('🔄 Running migration: Add packet key support...');

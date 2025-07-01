@@ -47,29 +47,35 @@ export class PacketKeyController {
         expiresAt.setDate(expiresAt.getDate() + expiresInDays);
       }
 
-      // Generate unique packet key
-      const keyResult = await db.query('SELECT generate_packet_key() as key');
-      const packetKey = keyResult.rows[0].key;
+      // Generate unique packet identifiers
+      const identifiersResult = await db.query('SELECT * FROM generate_packet_identifiers($1)', [name]);
+      const { packet_id, access_key } = identifiersResult.rows[0];
 
       // Insert packet key
       const insertResult = await db.query(`
-        INSERT INTO packet_keys (key, exchange_id, creator_id, name, description, max_usage, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO packet_keys (packet_id, access_key, exchange_id, creator_id, name, description, max_usage, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
-      `, [packetKey, exchangeId, userId, name, description, maxUsage, expiresAt]);
+      `, [packet_id, access_key, exchangeId, userId, name, description, maxUsage, expiresAt]);
 
       const createdKey = insertResult.rows[0];
 
       res.status(201).json({
         success: true,
         data: {
-          packetKey: createdKey.key,
-          mcpUrl: `${process.env.BASE_URL}/pk/${createdKey.key}`,
+          packetId: createdKey.packet_id,
+          accessKey: createdKey.access_key,
+          mcpUrl: `${process.env.BASE_URL}/${createdKey.packet_id}/mcp`,
           name: createdKey.name,
           description: createdKey.description,
           maxUsage: createdKey.max_usage,
           expiresAt: createdKey.expires_at,
-          createdAt: createdKey.created_at
+          createdAt: createdKey.created_at,
+          instructions: {
+            mcpUrl: `${process.env.BASE_URL}/${createdKey.packet_id}/mcp`,
+            accessKey: createdKey.access_key,
+            usage: "Add the MCP URL to Claude AI, then provide the access key when prompted for authorization"
+          }
         }
       });
 
@@ -240,18 +246,18 @@ export class PacketKeyController {
   }
 
   /**
-   * Validate and get exchange info by packet key (used by MCP endpoint)
+   * Validate and get exchange info by packet ID and access key (used by MCP endpoint)
    */
-  async validatePacketKey(packetKey: string): Promise<any> {
+  async validatePacketAccess(packetId: string, accessKey: string): Promise<any> {
     try {
       const result = await db.query(`
         SELECT pk.*, e.*
         FROM packet_keys pk
         JOIN exchanges e ON pk.exchange_id = e.id
-        WHERE pk.key = $1 AND pk.is_active = true
+        WHERE pk.packet_id = $1 AND pk.access_key = $2 AND pk.is_active = true
         AND (pk.expires_at IS NULL OR pk.expires_at > NOW())
         AND (pk.max_usage IS NULL OR pk.usage_count < pk.max_usage)
-      `, [packetKey]);
+      `, [packetId, accessKey]);
 
       if (result.rows.length === 0) {
         return null;
@@ -260,23 +266,44 @@ export class PacketKeyController {
       return result.rows[0];
 
     } catch (error) {
-      console.error('Validate packet key error:', error);
+      console.error('Validate packet access error:', error);
       return null;
     }
   }
 
   /**
-   * Log packet key usage
+   * Get packet info by ID only (for basic validation)
    */
-  async logUsage(packetKey: string, clientInfo: any, method: string, resource?: string): Promise<void> {
+  async getPacketInfo(packetId: string): Promise<any> {
     try {
-      await db.query(`
-        INSERT INTO packet_key_usage (packet_key, client_info, method, resource_accessed)
-        VALUES ($1, $2, $3, $4)
-      `, [packetKey, JSON.stringify(clientInfo), method, resource]);
+      const result = await db.query(`
+        SELECT pk.packet_id, pk.name, pk.description, pk.is_active, e.name as exchange_name
+        FROM packet_keys pk
+        JOIN exchanges e ON pk.exchange_id = e.id
+        WHERE pk.packet_id = $1 AND pk.is_active = true
+        AND (pk.expires_at IS NULL OR pk.expires_at > NOW())
+      `, [packetId]);
+
+      return result.rows[0] || null;
 
     } catch (error) {
-      console.error('Log packet key usage error:', error);
+      console.error('Get packet info error:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Log packet access usage
+   */
+  async logUsage(accessKey: string, clientInfo: any, method: string, resource?: string): Promise<void> {
+    try {
+      await db.query(`
+        INSERT INTO packet_key_usage (access_key, client_info, method, resource_accessed)
+        VALUES ($1, $2, $3, $4)
+      `, [accessKey, JSON.stringify(clientInfo), method, resource]);
+
+    } catch (error) {
+      console.error('Log packet usage error:', error);
       // Don't throw - usage logging shouldn't break the main flow
     }
   }
