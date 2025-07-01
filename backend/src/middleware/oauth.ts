@@ -22,13 +22,19 @@ export async function validateOAuthToken(req: AuthenticatedRequest, res: Respons
       
       // Always allow initialize method even for Claude (needed for session establishment)
       const isInitializeRequest = body && body.method === 'initialize';
-      const isOtherDiscoveryRequest = body && body.method && (
+      
+      // Allow tools/list, resources/list, prompts/list for Claude with session ID
+      const hasSessionId = req.headers['mcp-session-id'];
+      const isListRequest = body && body.method && (
         body.method === 'tools/list' ||
         body.method === 'resources/list' ||
         body.method === 'prompts/list'
-      ) && !isClaudeRequest;
+      );
+      const isClaudeListRequest = isClaudeRequest && isListRequest && hasSessionId;
       
-      const isDiscoveryRequest = isInitializeRequest || isOtherDiscoveryRequest;
+      const isOtherDiscoveryRequest = isListRequest && !isClaudeRequest;
+      
+      const isDiscoveryRequest = isInitializeRequest || isOtherDiscoveryRequest || isClaudeListRequest;
       
       // Also allow GET requests to MCP endpoints for initial discovery (but not for Claude OAuth trigger)
       const isMCPGetRequest = req.method === 'GET' && req.path.includes('/mcp') && !req.headers['user-agent']?.includes('claude');
