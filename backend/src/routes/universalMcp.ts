@@ -17,6 +17,9 @@ const optionalOAuth = (req: any, res: any, next: any) => {
   }
 };
 
+// Packet key based MCP endpoint - no authentication required, just the key
+router.all('/pk/:packetKey', mcpRateLimit, universalMcpController.handlePacketKeyMCPRequest.bind(universalMcpController));
+
 // Universal MCP endpoint - works with any MCP client
 // Supports both POST (Streamable HTTP) and GET (SSE) for maximum compatibility
 // Uses optional OAuth for backward compatibility

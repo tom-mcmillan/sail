@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { db } from '../services/database';
 import { AdapterRegistry } from '../adapters/AdapterRegistry';
 import { McpServerSDK } from '../services/McpServerSDK';
+import { packetKeyController } from './packetKeyController';
 
 interface AuthenticatedRequest extends Request {
   oauth?: {
@@ -16,6 +17,110 @@ class UniversalMCPControllerClass {
 
   constructor() {
     this.mcpServer = new McpServerSDK();
+  }
+
+  /**
+   * Handle packet key based MCP requests - no authentication required
+   */
+  async handlePacketKeyMCPRequest(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      console.log(`Packet Key MCP Request: ${req.method} ${req.url}`);
+      const { packetKey } = req.params;
+      
+      // Validate packet key and get exchange info
+      const packetData = await packetKeyController.validatePacketKey(packetKey);
+      
+      if (!packetData) {
+        res.status(404).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32002,
+            message: 'Invalid, expired, or deactivated packet key'
+          },
+          id: null
+        });
+        return;
+      }
+
+      // Log usage for analytics
+      const clientInfo = {
+        userAgent: req.headers['user-agent'],
+        ip: req.ip,
+        timestamp: new Date().toISOString()
+      };
+      
+      await packetKeyController.logUsage(
+        packetKey,
+        clientInfo,
+        req.body?.method || req.method,
+        req.url
+      );
+
+      // Use the exchange data to handle the MCP request
+      const exchange = packetData;
+      const knowledgeType = exchange.type || exchange.knowledge_type || 'local';
+      const adapterConfig = this.buildAdapterConfig(exchange, knowledgeType);
+      
+      // Create knowledge store adapter
+      if (!AdapterRegistry.isSupported(knowledgeType)) {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: `Unsupported knowledge store type: ${knowledgeType}`
+          },
+          id: null
+        });
+        return;
+      }
+
+      const adapter = AdapterRegistry.create(knowledgeType, adapterConfig);
+      
+      // For composite adapters, initialize sub-adapters
+      if (knowledgeType === 'composite' && 'initialize' in adapter) {
+        const subAdapters = new Map();
+        if (adapterConfig.sources) {
+          for (const source of adapterConfig.sources) {
+            try {
+              const subAdapter = AdapterRegistry.create(source.type, source.config);
+              subAdapters.set(source.id, subAdapter);
+            } catch (error) {
+              console.error(`Failed to create sub-adapter ${source.id}:`, error);
+            }
+          }
+        }
+        await (adapter as any).initialize(subAdapters);
+      }
+      
+      // Health check the adapter
+      const health = await adapter.healthCheck();
+      if (!health.healthy) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32003,
+            message: `Knowledge store unhealthy: ${health.message}`
+          },
+          id: null
+        });
+        return;
+      }
+
+      // Handle request through universal MCP server
+      await this.mcpServer.handleRequest(req, res, adapter);
+
+    } catch (error) {
+      console.error('Packet Key MCP request error:', error);
+      res.status(500).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Internal error',
+          data: error instanceof Error ? error.message : 'Unknown error'
+        },
+        id: null
+      });
+    }
   }
 
   /**

@@ -1,0 +1,18 @@
+---
+title: Flow
+---
+
+flowchart TD
+    subgraph C[Creator Flow]
+    direction LR
+        Creator--OAuth-->Sail--Store Tokens-->DB
+    end
+    C--Generate-->K["Packet Key
+    sail-pk-7x9m2n4p"]
+
+    subgraph U[Consumer Flow]
+    direction LR
+        Consumer--Packet Key-->Sail-Proxy--Fetch 
+        w/ Stored Tokens-->Github/Google
+    end
+    K--Use-->U
