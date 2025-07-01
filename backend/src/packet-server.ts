@@ -31,6 +31,7 @@ class PacketMCPServer {
   constructor() {
     this.app = express();
     this.app.use(express.json());
+    this.app.use(express.urlencoded({ extended: true }));
     this.setupPackets();
     this.setupRoutes();
   }
@@ -80,6 +81,8 @@ class PacketMCPServer {
       });
     });
 
+    // Remove OAuth endpoints - we want packet key authentication instead
+
     // Packet info endpoint (no auth required - for testing)
     this.app.get('/:packetId/info', (req, res) => {
       const { packetId } = req.params;
@@ -98,12 +101,12 @@ class PacketMCPServer {
           type: s.type,
           description: s.config.description
         })),
-        mcpUrl: `${process.env.BASE_URL || 'http://localhost:3000'}/${packetId}/mcp`,
+        mcpUrl: `https://mcp.sailmcp.com/${packetId}/mcp`,
         accessKeyRequired: true
       });
     });
 
-    // Main MCP endpoint with packet validation
+    // Main MCP endpoint with packet key authentication
     this.app.all('/:packetId/mcp', async (req, res) => {
       const { packetId } = req.params;
       
@@ -118,29 +121,49 @@ class PacketMCPServer {
           });
         }
 
-        // Extract and validate access key
-        const accessKey = this.extractAccessKey(req);
+        // Extract access key from Authorization header (Claude MCP standard)
+        const authHeader = req.headers.authorization;
+        let accessKey = null;
+        
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          accessKey = authHeader.substring(7);
+        }
+
+        // If no access key provided, return 401 to trigger Claude's auth prompt
         if (!accessKey) {
+          res.set('WWW-Authenticate', 'Bearer realm="Knowledge Packet", charset="UTF-8"');
           return res.status(401).json({
             jsonrpc: '2.0',
             error: { 
               code: -32001, 
-              message: 'Access key required. Provide via Authorization header (Bearer <key>) or ?key=<key> parameter.' 
+              message: 'Authentication required. Please provide your packet access key as Bearer token.',
+              data: {
+                packet: packet.name,
+                instructions: 'Enter your packet access key in the authorization token field'
+              }
             },
             id: null
           });
         }
 
+        // Validate access key
         if (accessKey !== packet.accessKey) {
           return res.status(403).json({
             jsonrpc: '2.0',
             error: { 
               code: -32003, 
-              message: 'Invalid access key for this knowledge packet' 
+              message: 'Invalid access key for this knowledge packet',
+              data: {
+                packet: packet.name,
+                providedKey: accessKey.substring(0, 8) + '...' // Show partial key for debugging
+              }
             },
             id: null
           });
         }
+
+        // Log successful access
+        console.log(`✅ Packet access granted: ${packet.name} (key: ${accessKey.substring(0, 8)}...)`);
 
         // Create MCP server instance for this packet
         const mcpServer = await this.createMCPServer(packet);
@@ -163,25 +186,6 @@ class PacketMCPServer {
     });
   }
 
-  private extractAccessKey(req: express.Request): string | null {
-    // Try Authorization header first
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      return authHeader.substring(7);
-    }
-
-    // Try query parameter
-    if (req.query.key) {
-      return req.query.key as string;
-    }
-
-    // Try body parameter for POST requests
-    if (req.body && req.body.accessKey) {
-      return req.body.accessKey;
-    }
-
-    return null;
-  }
 
   private async createMCPServer(packet: KnowledgePacket): Promise<McpServer> {
     const server = new McpServer({
@@ -403,7 +407,7 @@ class PacketMCPServer {
       // Handle MCP JSON-RPC requests
       const mcpRequest = req.body;
       
-      // Simple MCP request routing
+      // Handle MCP JSON-RPC requests
       if (mcpRequest.method === 'initialize') {
         res.json({
           jsonrpc: '2.0',
@@ -414,16 +418,65 @@ class PacketMCPServer {
               tools: {}
             },
             serverInfo: {
-              name: mcpServer.name,
-              version: mcpServer.version
+              name: `${packet.name}`,
+              version: "1.0.0",
+              description: `Knowledge packet: ${packet.description}`
             }
           },
+          id: mcpRequest.id
+        });
+      } else if (mcpRequest.method === 'resources/list') {
+        // Return available resources
+        const resources = [
+          {
+            uri: `packet://${packet.packetId}/search`,
+            name: `Search ${packet.name}`,
+            description: `Cross-source search across: ${packet.sources.map(s => s.type).join(', ')}`,
+            mimeType: "application/json"
+          },
+          {
+            uri: `packet://${packet.packetId}/sources`,
+            name: `${packet.name} - Sources`,
+            description: `Information about all ${packet.sources.length} knowledge sources`,
+            mimeType: "application/json"
+          }
+        ];
+        
+        res.json({
+          jsonrpc: '2.0',
+          result: { resources },
+          id: mcpRequest.id
+        });
+      } else if (mcpRequest.method === 'tools/list') {
+        // Return available tools
+        const tools = [{
+          name: "search_packet",
+          description: `Search across all knowledge sources in ${packet.name}`,
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "Search query to execute across GitHub repo, Google Docs, and other sources"
+              }
+            },
+            required: ["query"]
+          }
+        }];
+        
+        res.json({
+          jsonrpc: '2.0',
+          result: { tools },
           id: mcpRequest.id
         });
       } else {
         res.json({
           jsonrpc: '2.0',
-          result: { message: `Packet ${packet.name} is ready. Use a proper MCP client for full access.` },
+          result: { 
+            message: `${packet.name} packet is ready`,
+            sources: packet.sources.length,
+            authenticated: true
+          },
           id: mcpRequest.id || 1
         });
       }
