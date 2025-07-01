@@ -1,5 +1,4 @@
 import { redis } from './redis';
-import { KnowledgeStoreAdapter } from '../adapters/base/KnowledgeStoreAdapter';
 
 export interface SessionData {
   id: string;
