@@ -2,17 +2,20 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# Install required dependencies
+RUN apk add --no-cache python3 make g++
+
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies including dev dependencies for build
+# Install all dependencies
 RUN npm ci
 
 # Copy source code
 COPY . .
 
-# Build the application
-RUN npm run build
+# Build the application with verbose output
+RUN npm run build || (echo "Build failed, listing installed packages:" && npm list typescript && exit 1)
 
 # Remove dev dependencies and clean cache
 RUN npm ci --only=production && npm cache clean --force
