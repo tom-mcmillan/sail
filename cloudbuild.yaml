@@ -3,8 +3,6 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: 
       - 'build'
-      - '--platform'
-      - 'linux/amd64'
       - '-t'
       - 'gcr.io/$PROJECT_ID/sail-backend:$SHORT_SHA'
       - '-t'
