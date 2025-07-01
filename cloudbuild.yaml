@@ -4,14 +4,12 @@ steps:
     args: 
       - 'build'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/sail-backend:$SHORT_SHA'
-      - '-t'
       - 'gcr.io/$PROJECT_ID/sail-backend:latest'
       - './backend'
 
   # Push the Docker image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/sail-backend']
+    args: ['push', 'gcr.io/$PROJECT_ID/sail-backend:latest']
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -20,7 +18,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'sail-backend'
-      - '--image=gcr.io/$PROJECT_ID/sail-backend:$SHORT_SHA'
+      - '--image=gcr.io/$PROJECT_ID/sail-backend:latest'
       - '--region=us-central1'
       - '--platform=managed'
       - '--port=3001'
@@ -32,6 +30,6 @@ steps:
 # Build timeout
 timeout: '1200s'
 
-# Only build when backend files change
+# Logging
 options:
   logging: CLOUD_LOGGING_ONLY
