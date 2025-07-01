@@ -6,7 +6,7 @@ steps:
       - '--platform'
       - 'linux/amd64'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/sail-backend:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/sail-backend:$SHORT_SHA'
       - '-t'
       - 'gcr.io/$PROJECT_ID/sail-backend:latest'
       - './backend'
@@ -22,7 +22,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'sail-backend'
-      - '--image=gcr.io/$PROJECT_ID/sail-backend:$COMMIT_SHA'
+      - '--image=gcr.io/$PROJECT_ID/sail-backend:$SHORT_SHA'
       - '--region=us-central1'
       - '--platform=managed'
       - '--port=3001'
@@ -37,8 +37,3 @@ timeout: '1200s'
 # Only build when backend files change
 options:
   logging: CLOUD_LOGGING_ONLY
-  
-# Specify which files trigger builds
-includedFiles:
-  - 'backend/**'
-  - 'cloudbuild.yaml'
