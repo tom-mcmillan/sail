@@ -1,0 +1,40 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '-f'
+      - 'Dockerfile.simple'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/$_SERVICE_NAME:$BUILD_ID'
+      - '.'
+  
+  # Push the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/$_SERVICE_NAME:$BUILD_ID']
+  
+  # Deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - 'run'
+    - 'deploy'
+    - '$_SERVICE_NAME'
+    - '--image'
+    - 'gcr.io/$PROJECT_ID/$_SERVICE_NAME:$BUILD_ID'
+    - '--region'
+    - 'us-central1'
+    - '--allow-unauthenticated'
+    - '--port'
+    - '3000'
+    - '--memory'
+    - '512Mi'
+    - '--timeout'
+    - '300s'
+    - '--set-env-vars'
+    - 'NODE_ENV=production,BASE_URL=https://$_SERVICE_NAME-u5cx7jclbq-uc.a.run.app'
+
+substitutions:
+  _SERVICE_NAME: 'sail-packet-simple'
+
+images:
+  - 'gcr.io/$PROJECT_ID/$_SERVICE_NAME:$BUILD_ID'
