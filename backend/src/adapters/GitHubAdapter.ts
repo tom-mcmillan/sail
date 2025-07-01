@@ -1,4 +1,5 @@
-import { KnowledgeStoreAdapter, AdapterInfo } from './base/KnowledgeStoreAdapter';
+import { AdapterInfo } from './base/AdapterInfo';
+import { LegacyKnowledgeStoreAdapter } from './base/AdapterBridge';
 
 interface GitHubConfig {
   token: string;
@@ -19,7 +20,7 @@ interface GitHubFile {
   content?: string;
 }
 
-export class GitHubAdapter implements KnowledgeStoreAdapter {
+export class GitHubAdapter implements LegacyKnowledgeStoreAdapter {
   public readonly storeType = 'github';
   public readonly displayName = 'GitHub Repository';
   public readonly description = 'Access GitHub repository files, issues, and pull requests';

@@ -1,4 +1,5 @@
-import { KnowledgeStoreAdapter, AdapterInfo } from './base/KnowledgeStoreAdapter';
+import { AdapterInfo } from './base/AdapterInfo';
+import { LegacyKnowledgeStoreAdapter } from './base/AdapterBridge';
 
 export interface SourceConfig {
   id: string;
@@ -7,20 +8,20 @@ export interface SourceConfig {
   weight?: number; // For result ranking
 }
 
-export class CompositeAdapter implements KnowledgeStoreAdapter {
+export class CompositeAdapter implements LegacyKnowledgeStoreAdapter {
   public readonly storeType = 'composite';
   public readonly displayName = 'Multi-Source Bundle';
   public readonly description = 'Aggregates content from multiple knowledge sources';
   public readonly requiredConfig = ['sources'];
 
-  private adapters: Map<string, KnowledgeStoreAdapter> = new Map();
+  private adapters: Map<string, LegacyKnowledgeStoreAdapter> = new Map();
   private sources: SourceConfig[];
 
   constructor(config: { sources: SourceConfig[] }) {
     this.sources = config.sources;
   }
 
-  async initialize(adapters: Map<string, KnowledgeStoreAdapter>): Promise<void> {
+  async initialize(adapters: Map<string, LegacyKnowledgeStoreAdapter>): Promise<void> {
     this.adapters = adapters;
   }
 

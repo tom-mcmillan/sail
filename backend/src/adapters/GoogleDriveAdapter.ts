@@ -1,4 +1,5 @@
-import { KnowledgeStoreAdapter, AdapterInfo } from './base/KnowledgeStoreAdapter';
+import { AdapterInfo } from './base/AdapterInfo';
+import { LegacyKnowledgeStoreAdapter } from './base/AdapterBridge';
 
 interface GoogleDriveConfig {
   accessToken: string;
@@ -21,7 +22,7 @@ interface DriveFile {
   permissions?: any[];
 }
 
-export class GoogleDriveAdapter implements KnowledgeStoreAdapter {
+export class GoogleDriveAdapter implements LegacyKnowledgeStoreAdapter {
   public readonly storeType = 'google_drive';
   public readonly displayName = 'Google Drive';
   public readonly description = 'Access Google Drive files and documents';
