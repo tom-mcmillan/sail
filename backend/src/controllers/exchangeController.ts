@@ -6,6 +6,7 @@ import { redis } from '../services/redis';
 import { fileSystemService } from '../services/fileSystem';
 import { DockerSecurityService } from '../services/dockerSecurity';
 import { Exchange, CreateExchangeRequest } from '../types';
+import { AdapterRegistry } from '../adapters/AdapterRegistry';
 
 interface AuthenticatedRequest extends Request {
   user?: any;
@@ -82,6 +83,105 @@ export class ExchangeController {
       res.status(500).json({
         success: false,
         error: `Failed to create exchange: ${error instanceof Error ? error.message : 'Unknown error'}`
+      });
+    }
+  }
+
+  async createBundledExchange(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { name, description, sources, privacy = 'private' } = req.body;
+      
+      if (!req.user?.id) {
+        res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+        return;
+      }
+      
+      const userId = req.user.id;
+
+      if (!name || !description || !sources || !Array.isArray(sources) || sources.length === 0) {
+        res.status(400).json({
+          success: false,
+          error: 'Name, description, and sources array are required'
+        });
+        return;
+      }
+
+      // Validate each source configuration
+      for (const source of sources) {
+        if (!source.type || !source.config) {
+          res.status(400).json({
+            success: false,
+            error: 'Each source must have type and config'
+          });
+          return;
+        }
+
+        if (!AdapterRegistry.isSupported(source.type)) {
+          res.status(400).json({
+            success: false,
+            error: `Unsupported source type: ${source.type}. Supported types: ${AdapterRegistry.getAvailableTypes().join(', ')}`
+          });
+          return;
+        }
+      }
+
+      // Generate unique slug
+      const baseSlug = name
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .substring(0, 50);
+      const slug = `${baseSlug}-${uuidv4().substring(0, 8)}`;
+
+      // Check if slug already exists
+      const existingExchange = await db.query('SELECT id FROM exchanges WHERE slug = $1', [slug]);
+      if (existingExchange.rows.length > 0) {
+        res.status(409).json({
+          success: false,
+          error: 'Exchange name conflicts with existing exchange'
+        });
+        return;
+      }
+
+      // Prepare composite adapter configuration
+      const compositeConfig = {
+        sources: sources.map((source: any, index: number) => ({
+          id: `source_${index}`,
+          type: source.type,
+          config: source.config,
+          weight: source.weight || 1
+        }))
+      };
+
+      // Create exchange record with composite type
+      const exchangeResult = await db.query(
+        `INSERT INTO exchanges (user_id, name, description, type, slug, privacy, config) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7) 
+         RETURNING *`,
+        [userId, name, description, 'composite', slug, privacy, JSON.stringify(compositeConfig)]
+      );
+
+      const exchange = exchangeResult.rows[0];
+
+      // Start processing the exchange asynchronously
+      this.processExchange(exchange).catch(console.error);
+
+      res.status(201).json({
+        success: true,
+        data: {
+          ...exchange,
+          url: `${process.env.BASE_URL}/${slug}/mcp`,
+          sourceCount: sources.length
+        }
+      });
+    } catch (error) {
+      console.error('Create bundled exchange error:', error);
+      res.status(500).json({
+        success: false,
+        error: `Failed to create bundled exchange: ${error instanceof Error ? error.message : 'Unknown error'}`
       });
     }
   }

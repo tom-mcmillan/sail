@@ -1,5 +1,9 @@
 import { KnowledgeStoreAdapter } from './base/KnowledgeStoreAdapter';
+import { AdapterBridge, LegacyKnowledgeStoreAdapter } from './base/AdapterBridge';
 import { LocalFileSystemAdapter } from './LocalFileSystemAdapter';
+import { GitHubAdapter } from './GitHubAdapter';
+import { GoogleDriveAdapter } from './GoogleDriveAdapter';
+import { CompositeAdapter } from './CompositeAdapter';
 
 interface AdapterInfo {
   storeType: string;
@@ -7,6 +11,8 @@ interface AdapterInfo {
   description: string;
   requiredConfig: string[];
   adapterClass: typeof KnowledgeStoreAdapter;
+  isLegacy?: boolean;
+  legacyClass?: any;
 }
 
 export class AdapterRegistry {
@@ -28,14 +34,38 @@ export class AdapterRegistry {
     console.log(`Registered adapter: ${tempInstance.storeType} (${tempInstance.displayName})`);
   }
 
+  static registerLegacy(legacyAdapterClass: any) {
+    // Create temporary instance to get metadata
+    const tempInstance = new legacyAdapterClass({});
+    
+    const info: AdapterInfo = {
+      storeType: tempInstance.storeType,
+      displayName: tempInstance.displayName,
+      description: tempInstance.description,
+      requiredConfig: tempInstance.requiredConfig,
+      adapterClass: AdapterBridge as any,
+      isLegacy: true,
+      legacyClass: legacyAdapterClass
+    };
+    
+    this.adapters.set(tempInstance.storeType, info);
+    console.log(`Registered legacy adapter: ${tempInstance.storeType} (${tempInstance.displayName})`);
+  }
+
   static create(storeType: string, config: Record<string, any>): KnowledgeStoreAdapter {
     const adapterInfo = this.adapters.get(storeType);
     if (!adapterInfo) {
       throw new Error(`Unknown store type: ${storeType}. Available types: ${this.getAvailableTypes().join(', ')}`);
     }
     
-    // Create instance with config
-    return new (adapterInfo.adapterClass as any)(config);
+    if (adapterInfo.isLegacy && adapterInfo.legacyClass) {
+      // Create legacy adapter instance and wrap it in bridge
+      const legacyInstance = new adapterInfo.legacyClass(config);
+      return new AdapterBridge(legacyInstance, config);
+    } else {
+      // Create modern adapter instance
+      return new (adapterInfo.adapterClass as any)(config);
+    }
   }
 
   static getAvailableTypes(): string[] {
@@ -57,8 +87,6 @@ export class AdapterRegistry {
 
 // Register built-in adapters
 AdapterRegistry.register(LocalFileSystemAdapter);
-
-// TODO: Register additional adapters as they're implemented
-// AdapterRegistry.register(GitHubAdapter);
-// AdapterRegistry.register(GoogleDriveAdapter);
-// AdapterRegistry.register(ZoteroAdapter);
+AdapterRegistry.registerLegacy(GitHubAdapter);
+AdapterRegistry.registerLegacy(GoogleDriveAdapter);
+AdapterRegistry.registerLegacy(CompositeAdapter);

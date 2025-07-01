@@ -46,8 +46,8 @@ class UniversalMCPControllerClass {
 
       const exchange = exchangeResult.rows[0];
       
-      // Determine knowledge store type (default to 'local' for backward compatibility)
-      const knowledgeType = exchange.knowledge_type || 'local';
+      // Determine knowledge store type (use 'type' field for new exchanges, fallback to 'knowledge_type' for backward compatibility)
+      const knowledgeType = exchange.type || exchange.knowledge_type || 'local';
       
       // Get adapter configuration
       const adapterConfig = this.buildAdapterConfig(exchange, knowledgeType);
@@ -66,6 +66,22 @@ class UniversalMCPControllerClass {
       }
 
       const adapter = AdapterRegistry.create(knowledgeType, adapterConfig);
+      
+      // For composite adapters, initialize sub-adapters
+      if (knowledgeType === 'composite' && 'initialize' in adapter) {
+        const subAdapters = new Map();
+        if (adapterConfig.sources) {
+          for (const source of adapterConfig.sources) {
+            try {
+              const subAdapter = AdapterRegistry.create(source.type, source.config);
+              subAdapters.set(source.id, subAdapter);
+            } catch (error) {
+              console.error(`Failed to create sub-adapter ${source.id}:`, error);
+            }
+          }
+        }
+        await (adapter as any).initialize(subAdapters);
+      }
       
       // Health check the adapter
       const health = await adapter.healthCheck();
@@ -182,6 +198,9 @@ class UniversalMCPControllerClass {
           userId: baseConfig.userId,
           collectionId: baseConfig.collectionId
         };
+      
+      case 'composite':
+        return baseConfig; // For composite, the config is already properly structured
       
       default:
         return baseConfig;
