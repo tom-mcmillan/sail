@@ -493,22 +493,58 @@ class PacketMCPServer {
     // In production, this would use SSEServerTransport properly
     
     if (req.method === 'GET') {
-      // Return packet info for GET requests
-      res.json({
-        jsonrpc: '2.0',
-        result: {
-          name: mcpServer.name,
-          version: mcpServer.version,
-          packet: {
-            id: packet.packetId,
-            name: packet.name,
-            description: packet.description,
-            sources: packet.sources.length
+      // Check if client wants SSE
+      const acceptHeader = req.headers.accept || '';
+      
+      if (acceptHeader.includes('text/event-stream')) {
+        // SSE response
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Cache-Control'
+        });
+        
+        // Send initial message
+        res.write(`data: ${JSON.stringify({
+          jsonrpc: '2.0',
+          result: {
+            name: `sail-packet-${packet.packetId}`,
+            packet: packet.name,
+            message: "SSE connection established"
           },
-          instructions: "Use MCP client to connect to this endpoint for full functionality"
-        },
-        id: 1
-      });
+          id: 1
+        })}\n\n`);
+        
+        // Keep connection alive
+        const keepAlive = setInterval(() => {
+          res.write(`data: ${JSON.stringify({
+            jsonrpc: '2.0',
+            result: { message: "keepalive" },
+            id: Date.now()
+          })}\n\n`);
+        }, 30000);
+        
+        req.on('close', () => {
+          clearInterval(keepAlive);
+        });
+      } else {
+        // Regular JSON response
+        res.json({
+          jsonrpc: '2.0',
+          result: {
+            packet: {
+              id: packet.packetId,
+              name: packet.name,
+              description: packet.description,
+              sources: packet.sources.length
+            },
+            instructions: "Use MCP client to connect to this endpoint for full functionality"
+          },
+          id: 1
+        });
+      }
     } else {
       // Handle MCP JSON-RPC requests
       const mcpRequest = req.body;
@@ -521,23 +557,22 @@ class PacketMCPServer {
           result: {
             protocolVersion: '2024-11-05',
             capabilities: {
-              tools: {
-                listChanged: false
-              },
-              resources: {
-                subscribe: false,
-                listChanged: false
-              },
-              prompts: {
-                listChanged: false
-              }
+              tools: {},
+              resources: {},
+              prompts: {}
             },
             serverInfo: {
               name: `sail-packet-${packet.packetId}`,
-              title: packet.name,
               version: "1.0.0"
             }
           }
+        });
+      } else if (mcpRequest.method === 'notifications/initialized') {
+        // Acknowledge the initialized notification
+        res.json({
+          jsonrpc: '2.0',
+          id: mcpRequest.id,
+          result: {}
         });
       } else if (mcpRequest.method === 'resources/list') {
         // Return available resources
