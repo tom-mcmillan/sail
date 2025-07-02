@@ -81,7 +81,116 @@ class PacketMCPServer {
       });
     });
 
-    // Remove OAuth endpoints - we want packet key authentication instead
+    // OAuth endpoints for Claude AI integration (but using packet keys)
+    this.app.get('/authorize', (req, res) => {
+      const { client_id, redirect_uri, state, code_challenge } = req.query;
+      
+      // Show a simple page where user enters their packet access key
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Sail Knowledge Packet - Authorization</title>
+          <style>
+            body { font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; }
+            .form-group { margin: 15px 0; }
+            input[type="text"] { width: 100%; padding: 10px; font-size: 16px; }
+            button { background: #007cba; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; }
+            button:hover { background: #005a8a; }
+            .info { background: #f0f8ff; padding: 15px; border-radius: 4px; margin: 20px 0; }
+          </style>
+        </head>
+        <body>
+          <h2>🔑 Knowledge Packet Access</h2>
+          <div class="info">
+            <p><strong>You're connecting to a Sail Knowledge Packet.</strong></p>
+            <p>Enter the packet access key provided by the packet creator.</p>
+          </div>
+          
+          <form action="/authorize" method="post">
+            <input type="hidden" name="client_id" value="${client_id}">
+            <input type="hidden" name="redirect_uri" value="${redirect_uri}">
+            <input type="hidden" name="state" value="${state}">
+            <input type="hidden" name="code_challenge" value="${code_challenge}">
+            
+            <div class="form-group">
+              <label><strong>Packet Access Key:</strong></label>
+              <input type="text" name="access_key" placeholder="sail-pk-..." required>
+            </div>
+            
+            <button type="submit">Connect to Knowledge Packet</button>
+          </form>
+        </body>
+        </html>
+      `);
+    });
+
+    // Handle OAuth authorization with packet key
+    this.app.post('/authorize', (req, res) => {
+      const { client_id, redirect_uri, state, access_key } = req.body;
+      
+      // Validate the access key against all packets
+      let validPacket = null;
+      for (const packet of this.packets.values()) {
+        if (packet.accessKey === access_key) {
+          validPacket = packet;
+          break;
+        }
+      }
+      
+      if (!validPacket) {
+        return res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head><title>Invalid Access Key</title></head>
+          <body style="font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px;">
+            <h2>❌ Invalid Access Key</h2>
+            <p>The access key you provided is not valid for any knowledge packet.</p>
+            <p>Please check with the packet creator for the correct access key.</p>
+            <button onclick="history.back()">← Go Back</button>
+          </body>
+          </html>
+        `);
+      }
+      
+      // Generate auth code with packet info
+      const authCode = `packet_${validPacket.packetId}_${Date.now()}`;
+      
+      console.log(`✅ OAuth authorization granted for packet: ${validPacket.name}`);
+      
+      const redirectUrl = `${redirect_uri}?code=${authCode}&state=${state}`;
+      res.redirect(redirectUrl);
+    });
+
+    // OAuth token exchange - return the packet access key as the token
+    this.app.post('/token', (req, res) => {
+      const { grant_type, code, client_id } = req.body;
+      
+      if (grant_type === 'authorization_code' && code.startsWith('packet_')) {
+        // Extract packet info from auth code
+        const [, packetId] = code.split('_');
+        const packet = this.packets.get(packetId);
+        
+        if (packet) {
+          // Return the packet access key as the access token
+          res.json({
+            access_token: packet.accessKey,
+            token_type: 'Bearer',
+            expires_in: 3600,
+            scope: 'claudeai',
+            packet_info: {
+              name: packet.name,
+              description: packet.description,
+              sources: packet.sources.length
+            }
+          });
+        } else {
+          res.status(400).json({ error: 'invalid_grant' });
+        }
+      } else {
+        res.status(400).json({ error: 'unsupported_grant_type' });
+      }
+    });
 
     // Packet info endpoint (no auth required - for testing)
     this.app.get('/:packetId/info', (req, res) => {
@@ -165,11 +274,8 @@ class PacketMCPServer {
         // Log successful access
         console.log(`✅ Packet access granted: ${packet.name} (key: ${accessKey.substring(0, 8)}...)`);
 
-        // Create MCP server instance for this packet
-        const mcpServer = await this.createMCPServer(packet);
-        
-        // Handle MCP request
-        await this.handleMCPRequest(req, res, mcpServer, packet);
+        // Handle MCP request directly (bypassing SDK for now)
+        await this.handleMCPRequest(req, res, null, packet);
 
       } catch (error) {
         console.error('MCP request error:', error);
@@ -382,7 +488,7 @@ class PacketMCPServer {
     return results.sort((a, b) => b.relevance - a.relevance);
   }
 
-  private async handleMCPRequest(req: express.Request, res: express.Response, mcpServer: McpServer, packet: KnowledgePacket) {
+  private async handleMCPRequest(req: express.Request, res: express.Response, mcpServer: McpServer | null, packet: KnowledgePacket) {
     // For now, handle basic MCP requests manually
     // In production, this would use SSEServerTransport properly
     
@@ -411,19 +517,27 @@ class PacketMCPServer {
       if (mcpRequest.method === 'initialize') {
         res.json({
           jsonrpc: '2.0',
+          id: mcpRequest.id,
           result: {
             protocolVersion: '2024-11-05',
             capabilities: {
-              resources: {},
-              tools: {}
+              tools: {
+                listChanged: false
+              },
+              resources: {
+                subscribe: false,
+                listChanged: false
+              },
+              prompts: {
+                listChanged: false
+              }
             },
             serverInfo: {
-              name: `${packet.name}`,
-              version: "1.0.0",
-              description: `Knowledge packet: ${packet.description}`
+              name: `sail-packet-${packet.packetId}`,
+              title: packet.name,
+              version: "1.0.0"
             }
-          },
-          id: mcpRequest.id
+          }
         });
       } else if (mcpRequest.method === 'resources/list') {
         // Return available resources
@@ -444,8 +558,10 @@ class PacketMCPServer {
         
         res.json({
           jsonrpc: '2.0',
-          result: { resources },
-          id: mcpRequest.id
+          id: mcpRequest.id,
+          result: { 
+            resources: resources
+          }
         });
       } else if (mcpRequest.method === 'tools/list') {
         // Return available tools
@@ -466,18 +582,162 @@ class PacketMCPServer {
         
         res.json({
           jsonrpc: '2.0',
-          result: { tools },
-          id: mcpRequest.id
+          id: mcpRequest.id,
+          result: { tools }
         });
-      } else {
+      } else if (mcpRequest.method === 'prompts/list') {
+        // Return available prompts
+        const prompts = [{
+          name: "analyze_packet",
+          title: "Analyze Knowledge Packet",
+          description: "Provides a comprehensive analysis of the knowledge packet contents",
+          arguments: [
+            {
+              name: "focus_area",
+              description: "Specific area to focus the analysis on (optional)",
+              required: false
+            }
+          ]
+        }];
+        
         res.json({
           jsonrpc: '2.0',
+          id: mcpRequest.id,
+          result: { 
+            prompts: prompts
+          }
+        });
+      } else if (mcpRequest.method === 'tools/call') {
+        // Handle tool execution
+        const { name, arguments: args } = mcpRequest.params;
+        
+        if (name === 'search_packet') {
+          const query = args?.query || '';
+          
+          // Mock search results for demo
+          const results = [
+            {
+              source: "github-repo",
+              type: "code",
+              title: "Sail MCP Implementation",
+              content: `Found in backend code: Knowledge packet server implementation using MCP protocol`,
+              relevance: 0.95
+            },
+            {
+              source: "vision-doc", 
+              type: "document",
+              title: "Sail Vision - Knowledge Packets",
+              content: `From vision doc: "${query}" - Knowledge packets bundle multiple sources into single MCP endpoints`,
+              relevance: 0.90
+            }
+          ];
+          
+          res.json({
+            jsonrpc: '2.0',
+            id: mcpRequest.id,
+            result: {
+              content: [{
+                type: "text",
+                text: `Search results for "${query}":\n\n` + 
+                      results.map(r => `**${r.title}** (${r.source})\n${r.content}\n`).join('\n')
+              }]
+            }
+          });
+        } else {
+          res.status(404).json({
+            jsonrpc: '2.0',
+            id: mcpRequest.id,
+            error: {
+              code: -32601,
+              message: `Tool not found: ${name}`
+            }
+          });
+        }
+      } else if (mcpRequest.method === 'resources/read') {
+        // Handle resource reading
+        const { uri } = mcpRequest.params;
+        
+        if (uri === `packet://${packet.packetId}/sources`) {
+          res.json({
+            jsonrpc: '2.0',
+            id: mcpRequest.id,
+            result: {
+              contents: [{
+                uri: uri,
+                mimeType: "application/json",
+                text: JSON.stringify({
+                  packet: {
+                    id: packet.packetId,
+                    name: packet.name,
+                    description: packet.description
+                  },
+                  sources: packet.sources.map(s => ({
+                    id: s.id,
+                    type: s.type,
+                    config: s.config
+                  }))
+                }, null, 2)
+              }]
+            }
+          });
+        } else {
+          res.status(404).json({
+            jsonrpc: '2.0',
+            id: mcpRequest.id,
+            error: {
+              code: -32002,
+              message: `Resource not found: ${uri}`
+            }
+          });
+        }
+      } else if (mcpRequest.method === 'prompts/get') {
+        // Handle prompt retrieval
+        const { name } = mcpRequest.params;
+        
+        if (name === 'analyze_packet') {
+          res.json({
+            jsonrpc: '2.0',
+            id: mcpRequest.id,
+            result: {
+              prompt: {
+                name: "analyze_packet",
+                title: "Analyze Knowledge Packet",
+                description: "Provides a comprehensive analysis of the knowledge packet contents",
+                messages: [
+                  {
+                    role: "user",
+                    content: {
+                      type: "text",
+                      text: `Please analyze the "${packet.name}" knowledge packet. This packet contains ${packet.sources.length} sources: ${packet.sources.map(s => s.type).join(', ')}. Focus on: {{focus_area|the overall structure and content}}`
+                    }
+                  }
+                ]
+              }
+            }
+          });
+        } else {
+          res.status(404).json({
+            jsonrpc: '2.0',
+            id: mcpRequest.id,
+            error: {
+              code: -32002,
+              message: `Prompt not found: ${name}`
+            }
+          });
+        }
+      } else {
+        // Log unknown method for debugging
+        console.log(`Unknown MCP method: ${mcpRequest.method}`);
+        
+        res.json({
+          jsonrpc: '2.0',
+          id: mcpRequest.id,
           result: { 
             message: `${packet.name} packet is ready`,
             sources: packet.sources.length,
-            authenticated: true
-          },
-          id: mcpRequest.id || 1
+            authenticated: true,
+            unknownMethod: mcpRequest.method
+          }
         });
       }
     }
