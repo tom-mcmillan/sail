@@ -25,10 +25,22 @@ interface KnowledgeSource {
   credentials?: Record<string, any>;
 }
 
+interface RegisteredClient {
+  client_id: string;
+  client_secret: string;
+  client_name: string;
+  redirect_uris: string[];
+  grant_types: string[];
+  response_types: string[];
+  scope: string;
+  created_at: number;
+}
+
 class PacketMCPServer {
   private app: express.Application;
   private packets: Map<string, KnowledgePacket> = new Map();
   private transports: Record<string, SSEServerTransport> = {};
+  private registeredClients: Map<string, RegisteredClient> = new Map();
 
   constructor() {
     this.app = express();
@@ -182,9 +194,119 @@ class PacketMCPServer {
       });
     });
 
+    // OAuth 2.0 Authorization Server Metadata (RFC 8414)
+    this.app.get('/.well-known/oauth-authorization-server', (req, res) => {
+      const baseUrl = `https://${req.get('host')}`;
+      res.json({
+        issuer: baseUrl,
+        authorization_endpoint: `${baseUrl}/authorize`,
+        token_endpoint: `${baseUrl}/token`,
+        registration_endpoint: `${baseUrl}/register`,
+        grant_types_supported: ["authorization_code"],
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: ["none"],
+        scopes_supported: ["claudeai"],
+        subject_types_supported: ["public"]
+      });
+    });
+
+    // OAuth 2.0 Dynamic Client Registration (RFC 7591)
+    this.app.post('/register', (req, res) => {
+      const {
+        client_name,
+        redirect_uris,
+        grant_types = ["authorization_code"],
+        response_types = ["code"],
+        scope = "claudeai"
+      } = req.body;
+
+      // Validate redirect URIs (must be localhost or HTTPS)
+      if (!redirect_uris || !Array.isArray(redirect_uris)) {
+        return res.status(400).json({
+          error: "invalid_redirect_uri",
+          error_description: "redirect_uris is required and must be an array"
+        });
+      }
+
+      for (const uri of redirect_uris) {
+        const url = new URL(uri);
+        if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+          return res.status(400).json({
+            error: "invalid_redirect_uri", 
+            error_description: "Redirect URIs must be localhost or HTTPS URLs"
+          });
+        }
+      }
+
+      // Generate dynamic client credentials
+      const clientId = `mcp_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+      const clientSecret = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+
+      // Store the registered client
+      const registeredClient: RegisteredClient = {
+        client_id: clientId,
+        client_secret: clientSecret,
+        client_name: client_name || "MCP Client",
+        redirect_uris: redirect_uris,
+        grant_types: grant_types,
+        response_types: response_types,
+        scope: scope,
+        created_at: Math.floor(Date.now() / 1000)
+      };
+      
+      this.registeredClients.set(clientId, registeredClient);
+
+      console.log(`📝 Dynamic client registration: ${client_name || 'Unknown Client'} (${clientId})`);
+
+      // Return client registration response
+      res.json({
+        client_id: clientId,
+        client_secret: clientSecret,
+        client_name: client_name || "MCP Client",
+        redirect_uris: redirect_uris,
+        grant_types: grant_types,
+        response_types: response_types,
+        scope: scope,
+        token_endpoint_auth_method: "none",
+        client_id_issued_at: Math.floor(Date.now() / 1000),
+        expires_in: 3600 * 24 * 30 // 30 days
+      });
+    });
+
     // OAuth authorization page
     this.app.get('/authorize', (req, res) => {
-      const { client_id, redirect_uri, state, code_challenge } = req.query;
+      const { client_id, redirect_uri, state, code_challenge, scope } = req.query;
+
+      // Validate the client_id
+      const client = this.registeredClients.get(client_id as string);
+      if (!client) {
+        return res.status(400).send(`
+          <!DOCTYPE html>
+          <html>
+          <head><title>Invalid Client</title></head>
+          <body style="font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px;">
+            <h2>❌ Invalid Client</h2>
+            <p>The client ID provided is not registered with this authorization server.</p>
+            <p>Client must register using the Dynamic Client Registration endpoint first.</p>
+          </body>
+          </html>
+        `);
+      }
+
+      // Validate redirect URI
+      if (!client.redirect_uris.includes(redirect_uri as string)) {
+        return res.status(400).send(`
+          <!DOCTYPE html>
+          <html>
+          <head><title>Invalid Redirect URI</title></head>
+          <body style="font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px;">
+            <h2>❌ Invalid Redirect URI</h2>
+            <p>The redirect URI provided is not registered for this client.</p>
+          </body>
+          </html>
+        `);
+      }
       
       res.send(`
         <!DOCTYPE html>
@@ -198,6 +320,7 @@ class PacketMCPServer {
             button { background: #007cba; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; }
             button:hover { background: #005a8a; }
             .info { background: #f0f8ff; padding: 15px; border-radius: 4px; margin: 20px 0; }
+            .client-info { background: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; font-size: 14px; }
           </style>
         </head>
         <body>
@@ -207,11 +330,17 @@ class PacketMCPServer {
             <p>Enter the packet access key provided by the packet creator.</p>
           </div>
           
+          <div class="client-info">
+            <strong>Client:</strong> ${client.client_name}<br>
+            <strong>Requested Access:</strong> ${scope || 'claudeai'}
+          </div>
+          
           <form action="/authorize" method="post">
             <input type="hidden" name="client_id" value="${client_id}">
             <input type="hidden" name="redirect_uri" value="${redirect_uri}">
             <input type="hidden" name="state" value="${state}">
             <input type="hidden" name="code_challenge" value="${code_challenge}">
+            <input type="hidden" name="scope" value="${scope}">
             
             <div class="form-group">
               <label><strong>Packet Access Key:</strong></label>
@@ -227,7 +356,18 @@ class PacketMCPServer {
 
     // Handle OAuth authorization with packet key
     this.app.post('/authorize', (req, res) => {
-      const { client_id, redirect_uri, state, access_key } = req.body;
+      const { client_id, redirect_uri, state, access_key, code_challenge, scope } = req.body;
+
+      // Validate the client_id
+      const client = this.registeredClients.get(client_id);
+      if (!client) {
+        return res.status(400).send('Invalid client ID');
+      }
+
+      // Validate redirect URI
+      if (!client.redirect_uris.includes(redirect_uri)) {
+        return res.status(400).send('Invalid redirect URI');
+      }
       
       // Validate the access key against all packets
       let validPacket = null;
@@ -253,10 +393,10 @@ class PacketMCPServer {
         `);
       }
       
-      // Generate auth code with packet info
-      const authCode = `packet_${validPacket.packetId}_${Date.now()}`;
+      // Generate auth code with packet info and client info
+      const authCode = `packet_${validPacket.packetId}_${client_id}_${Date.now()}`;
       
-      console.log(`✅ OAuth authorization granted for packet: ${validPacket.name}`);
+      console.log(`✅ OAuth authorization granted for packet: ${validPacket.name} by client: ${client.client_name}`);
       
       const redirectUrl = `${redirect_uri}?code=${authCode}&state=${state}`;
       res.redirect(redirectUrl);
@@ -264,31 +404,71 @@ class PacketMCPServer {
 
     // OAuth token exchange
     this.app.post('/token', (req, res) => {
-      const { grant_type, code, client_id } = req.body;
+      const { grant_type, code, client_id, code_verifier } = req.body;
       
-      if (grant_type === 'authorization_code' && code.startsWith('packet_')) {
-        // Extract packet info from auth code
-        const [, packetId] = code.split('_');
-        const packet = this.packets.get(packetId);
-        
-        if (packet) {
-          res.json({
-            access_token: packet.accessKey,
-            token_type: 'Bearer',
-            expires_in: 3600,
-            scope: 'claudeai',
-            packet_info: {
-              name: packet.name,
-              description: packet.description,
-              sources: packet.sources.length
-            }
-          });
-        } else {
-          res.status(400).json({ error: 'invalid_grant' });
-        }
-      } else {
-        res.status(400).json({ error: 'unsupported_grant_type' });
+      if (grant_type !== 'authorization_code') {
+        return res.status(400).json({ 
+          error: 'unsupported_grant_type',
+          error_description: 'Only authorization_code grant type is supported'
+        });
       }
+
+      if (!code || !code.startsWith('packet_')) {
+        return res.status(400).json({ 
+          error: 'invalid_grant',
+          error_description: 'Invalid authorization code'
+        });
+      }
+
+      // Extract packet info and client info from auth code
+      const codeParts = code.split('_');
+      if (codeParts.length < 4) {
+        return res.status(400).json({ 
+          error: 'invalid_grant',
+          error_description: 'Malformed authorization code'
+        });
+      }
+
+      const [, packetId, codeClientId] = codeParts;
+      
+      // Validate client ID matches the one in the auth code
+      if (client_id !== codeClientId) {
+        return res.status(400).json({ 
+          error: 'invalid_client',
+          error_description: 'Client ID mismatch'
+        });
+      }
+
+      // Validate client exists
+      const client = this.registeredClients.get(client_id);
+      if (!client) {
+        return res.status(400).json({ 
+          error: 'invalid_client',
+          error_description: 'Client not found'
+        });
+      }
+
+      // Get the packet
+      const packet = this.packets.get(packetId);
+      if (!packet) {
+        return res.status(400).json({ 
+          error: 'invalid_grant',
+          error_description: 'Packet not found'
+        });
+      }
+
+      // Return access token (using packet key as token)
+      res.json({
+        access_token: packet.accessKey,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: 'claudeai',
+        packet_info: {
+          name: packet.name,
+          description: packet.description,
+          sources: packet.sources.length
+        }
+      });
     });
 
     // Packet info endpoint 
