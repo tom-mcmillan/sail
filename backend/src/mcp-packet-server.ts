@@ -185,19 +185,12 @@ class PacketMCPServer {
   }
 
   private setupRoutes() {
-    // Health check
-    this.app.get('/health', (req, res) => {
-      res.json({ 
-        status: 'healthy', 
-        server: 'sail-knowledge-packet',
-        packets: Array.from(this.packets.keys())
-      });
+    // Test route to verify new deployment
+    this.app.get('/oauth-test', (req, res) => {
+      res.json({ message: 'OAuth routes loaded', version: '2.0' });
     });
 
-    // Create .well-known directory endpoint (Express route handling for dots)
-    this.app.use('/.well-known', express.static('public')); // This helps Express handle the .well-known path
-
-    // OAuth 2.0 Authorization Server Metadata (RFC 8414)
+    // OAuth 2.0 Authorization Server Metadata (RFC 8414) - MUST be first
     this.app.get('/.well-known/oauth-authorization-server', (req, res) => {
       const baseUrl = `https://${req.get('host')}`;
       res.json({
@@ -228,6 +221,17 @@ class PacketMCPServer {
         token_endpoint_auth_methods_supported: ["none"],
         scopes_supported: ["claudeai"],
         subject_types_supported: ["public"]
+      });
+    });
+
+    // Health check
+    this.app.get('/health', (req, res) => {
+      res.json({ 
+        status: 'healthy', 
+        server: 'sail-knowledge-packet',
+        packets: Array.from(this.packets.keys()),
+        oauth_enabled: true,
+        version: '2.0'
       });
     });
 
