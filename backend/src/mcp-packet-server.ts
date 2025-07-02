@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { z } from 'zod';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Pool } from 'pg';
 
 /**
  * Knowledge Packet MCP Server using official SDK
@@ -36,9 +37,16 @@ interface RegisteredClient {
   created_at: number;
 }
 
+interface User {
+  id: string;
+  email: string;
+  name?: string;
+  created_at: Date;
+}
+
 class PacketMCPServer {
   private app: express.Application;
-  private packets: Map<string, KnowledgePacket> = new Map();
+  private db: Pool;
   private transports: Record<string, SSEServerTransport> = {};
   private registeredClients: Map<string, RegisteredClient> = new Map();
 
@@ -46,43 +54,89 @@ class PacketMCPServer {
     this.app = express();
     this.app.use(express.json());
     this.app.use(express.urlencoded({ extended: true }));
-    this.setupPackets();
+    this.initializeDatabase();
     this.setupRoutes();
   }
 
-  private setupPackets() {
-    // Create our test packet
-    const testPacket: KnowledgePacket = {
-      packetId: "sail-architecture-demo",
-      accessKey: "sail-pk-demo123",
-      name: "Sail Architecture Demo", 
-      description: "Demo packet showing Sail's multi-source knowledge bundling with real Google Doc and GitHub repo",
-      sources: [
-        {
-          id: "github-repo",
-          type: "github",
-          config: {
-            owner: "tom-mcmillan",
-            repo: "sail",
-            url: "https://github.com/tom-mcmillan/sail",
-            description: "Sail MCP backend implementation and documentation"
-          }
-        },
-        {
-          id: "vision-doc",
-          type: "google_doc",
-          config: {
-            docId: "1KHabk8VaD993uQwmxC2QNmn6cA-fnsRT_hjQLVkGDjA",
-            url: "https://docs.google.com/document/d/1KHabk8VaD993uQwmxC2QNmn6cA-fnsRT_hjQLVkGDjA/edit",
-            description: "Sail project vision and knowledge packet architecture"
-          }
-        }
-      ],
-      createdAt: new Date()
-    };
+  private initializeDatabase() {
+    const databaseUrl = process.env.DATABASE_URL;
+    
+    if (!databaseUrl) {
+      throw new Error('DATABASE_URL environment variable is required');
+    }
 
-    this.packets.set(testPacket.packetId, testPacket);
-    console.log(`📦 Created test packet: ${testPacket.packetId}`);
+    this.db = new Pool({
+      connectionString: databaseUrl,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+
+    console.log('📦 Database connection initialized');
+  }
+
+  // Database methods for packets
+  async getPacketByAccessKey(accessKey: string): Promise<KnowledgePacket | null> {
+    try {
+      const result = await this.db.query(
+        'SELECT * FROM packet_keys pk JOIN exchanges e ON pk.packet_id = e.id WHERE pk.access_key = $1',
+        [accessKey]
+      );
+      
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const row = result.rows[0];
+      return {
+        packetId: row.packet_id,
+        accessKey: row.access_key,
+        name: row.name,
+        description: row.description || '',
+        sources: JSON.parse(row.config || '[]'),
+        createdAt: new Date(row.created_at)
+      };
+    } catch (error) {
+      console.error('Error fetching packet by access key:', error);
+      return null;
+    }
+  }
+
+  async getPacketById(packetId: string): Promise<KnowledgePacket | null> {
+    try {
+      const result = await this.db.query(
+        'SELECT * FROM packet_keys pk JOIN exchanges e ON pk.packet_id = e.id WHERE pk.packet_id = $1',
+        [packetId]
+      );
+      
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const row = result.rows[0];
+      return {
+        packetId: row.packet_id,
+        accessKey: row.access_key,
+        name: row.name,
+        description: row.description || '',
+        sources: JSON.parse(row.config || '[]'),
+        createdAt: new Date(row.created_at)
+      };
+    } catch (error) {
+      console.error('Error fetching packet by ID:', error);
+      return null;
+    }
+  }
+
+  async getAllPackets(): Promise<string[]> {
+    try {
+      const result = await this.db.query('SELECT DISTINCT packet_id FROM packet_keys');
+      return result.rows.map(row => row.packet_id);
+    } catch (error) {
+      console.error('Error fetching all packets:', error);
+      return [];
+    }
   }
 
   private createMCPServer(packet: KnowledgePacket): McpServer {
@@ -225,14 +279,25 @@ class PacketMCPServer {
     });
 
     // Health check
-    this.app.get('/health', (req, res) => {
-      res.json({ 
-        status: 'healthy', 
-        server: 'sail-knowledge-packet',
-        packets: Array.from(this.packets.keys()),
-        oauth_enabled: true,
-        version: '2.0'
-      });
+    this.app.get('/health', async (req, res) => {
+      try {
+        const packets = await this.getAllPackets();
+        res.json({ 
+          status: 'healthy', 
+          server: 'sail-knowledge-packet',
+          database: 'connected',
+          packets: packets,
+          oauth_enabled: true,
+          version: '3.0'
+        });
+      } catch (error) {
+        res.status(500).json({
+          status: 'unhealthy',
+          server: 'sail-knowledge-packet',
+          database: 'disconnected',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
     });
 
     // OAuth 2.0 Dynamic Client Registration (RFC 7591)
@@ -393,14 +458,8 @@ class PacketMCPServer {
         return res.status(400).send('Invalid redirect URI');
       }
       
-      // Validate the access key against all packets
-      let validPacket = null;
-      for (const packet of this.packets.values()) {
-        if (packet.accessKey === access_key) {
-          validPacket = packet;
-          break;
-        }
-      }
+      // Validate the access key against database
+      const validPacket = await this.getPacketByAccessKey(access_key);
       
       if (!validPacket) {
         return res.send(`
@@ -472,8 +531,8 @@ class PacketMCPServer {
         });
       }
 
-      // Get the packet
-      const packet = this.packets.get(packetId);
+      // Get the packet from database
+      const packet = await this.getPacketById(packetId);
       if (!packet) {
         return res.status(400).json({ 
           error: 'invalid_grant',
@@ -525,8 +584,8 @@ class PacketMCPServer {
       console.log(`Received GET request to /${packetId}/mcp (establishing SSE stream)`);
 
       try {
-        // Validate packet exists
-        const packet = this.packets.get(packetId);
+        // Validate packet exists in database
+        const packet = await this.getPacketById(packetId);
         if (!packet) {
           return res.status(404).send('Knowledge packet not found');
         }
