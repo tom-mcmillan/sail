@@ -1,19 +1,13 @@
 #!/bin/bash
-set -e
+# DEPRECATED: Do not use this script
+# Use 'gcloud run deploy sail-backend --source .' instead
+# Or push to GitHub to trigger automatic deployment
 
-echo "Building Docker image..."
-docker build -t sailmcp-backend:latest .
-
-echo "Deploying to Cloud Run..."
-gcloud run deploy sailmcp-backend \
-  --image sailmcp-backend:latest \
-  --region us-central1 \
-  --platform managed \
-  --allow-unauthenticated \
-  --port 8080 \
-  --timeout 300 \
-  --memory 512Mi \
-  --cpu 1 \
-  --max-instances 10
-
-echo "Deployment complete!"
+echo "ERROR: This deployment script is deprecated!"
+echo ""
+echo "To deploy, use ONE of these methods:"
+echo "1. Push to GitHub (automatic deployment via Cloud Build)"
+echo "2. Manual: gcloud run deploy sail-backend --source . --region us-central1"
+echo ""
+echo "We only use 'sail-backend' service now (not sailmcp-backend)"
+exit 1
