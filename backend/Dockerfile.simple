@@ -9,11 +9,11 @@ COPY simple-package.json package.json
 RUN npm install
 
 # Copy source code
-COPY src/packet-server.ts src/
+COPY src/mcp-packet-server.ts src/
 
 # Install tsx globally for direct TypeScript execution
 RUN npm install -g tsx
 
 EXPOSE 3000
 
-CMD ["tsx", "src/packet-server.ts"]
+CMD ["tsx", "src/mcp-packet-server.ts"]
